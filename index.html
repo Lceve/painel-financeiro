@@ -5808,6 +5808,15 @@ function buildArvoreNativaDre(empresa, categories, movements, meses, nfeRows, ex
   // não uma categoria fiscal separada. Isso exigiu sincronizar
   // compl.cCodCateg como codigo_categoria em dash_nfe (antes não vinha).
   const DRE_NATIVO_IMPOSTO_NFE_DESTINO = DRE_NATIVO_DESTINO_IMPOSTOS;
+  // FIX 24/08/2026 (pedido Lucas, bug real achado): antes, o imposto
+  // embutido de QUALQUER NFe (compra ou venda) caía sempre no bucket de
+  // Impostos, ignorando o codigo_dre da própria categoria da nota. Nota
+  // de entrada (tipo_nf='0', compra) não é imposto sobre venda — o
+  // destino certo é o codigo_dre da categoria da nota (ex: Custo
+  // Serviços). Nota de saída (tipo_nf='1') continua indo pra Impostos,
+  // como sempre foi. Nota sem tipo_nf ainda sincronizado (dado antigo,
+  // ou RT que ainda não tem essa coluna) mantém o comportamento antigo
+  // (Impostos), pra não quebrar nada que já funcionava.
   (nfeRows || []).forEach(n => {
     if (n._empresa !== empresa) return;
     if (!n.codigo_categoria) return;
@@ -5820,10 +5829,11 @@ function buildArvoreNativaDre(empresa, categories, movements, meses, nfeRows, ex
     if (mesIdx < 0) return;
     const totalImposto = Number(n.valor_icms || 0) + Number(n.valor_pis || 0) + Number(n.valor_cofins || 0);
     if (!totalImposto) return;
+    const destino = (n.tipo_nf === '0') ? cat.codigo_dre : DRE_NATIVO_IMPOSTO_NFE_DESTINO;
     const labelCat = decodeHtmlEntities(cat.descricao || cat.codigo);
-    if (!valores[DRE_NATIVO_IMPOSTO_NFE_DESTINO]) valores[DRE_NATIVO_IMPOSTO_NFE_DESTINO] = {};
-    if (!valores[DRE_NATIVO_IMPOSTO_NFE_DESTINO][labelCat]) valores[DRE_NATIVO_IMPOSTO_NFE_DESTINO][labelCat] = new Array(meses.length).fill(0);
-    valores[DRE_NATIVO_IMPOSTO_NFE_DESTINO][labelCat][mesIdx] += -totalImposto;
+    if (!valores[destino]) valores[destino] = {};
+    if (!valores[destino][labelCat]) valores[destino][labelCat] = new Array(meses.length).fill(0);
+    valores[destino][labelCat][mesIdx] += -totalImposto;
   });
 
   // Extrato bancário sem título formal — mesma lógica de categoria→codigo_dre
@@ -11807,10 +11817,15 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   // esses títulos ficam de fora do DRE nativo inteiro (nunca acham
   // codigo_dre). Busca só cod_titulo+cod_categoria, sem trazer o resto.
   const fmCategPath = 'dash_financial_movements?select=cod_titulo,cod_categoria&cod_categoria=not.is.null&cod_titulo=not.is.null&cod_titulo=neq.0';
-  // NFe: usado só pela árvore nativa (Impostos), pra somar ICMS/PIS/COFINS
-  // embutidos na nota, atribuídos à mesma categoria do título de venda —
-  // ver comentário mais abaixo sobre DRE_NATIVO_IMPOSTO_NFE_CODIGO_DRE.
-  const nfePath = 'dash_nfe?select=id_nf,codigo_categoria,dt_emissao,valor_icms,valor_pis,valor_cofins';
+  // NFe: usado só pela árvore nativa (Impostos/Custo via redirecionamento
+  // por tipo_nf), pra somar ICMS/PIS/COFINS embutidos na nota — ver
+  // comentário mais abaixo sobre DRE_NATIVO_IMPOSTO_NFE_CODIGO_DRE.
+  // FIX 24/08/2026 (bug real achado): dt_cancelamento/denegada/
+  // dt_inutilizacao já eram checados no filtro do código (linha ~5826)
+  // desde 21/08, mas nunca vinham nessa query — o filtro nunca excluía
+  // nada de fato, sempre undefined. Adicionados aqui junto com tipo_nf
+  // (novo, usado pra não jogar imposto de nota de compra em Impostos).
+  const nfePath = 'dash_nfe?select=id_nf,codigo_categoria,dt_emissao,valor_icms,valor_pis,valor_cofins,dt_cancelamento,denegada,dt_inutilizacao,tipo_nf';
   // Extrato bancário sem título formal (Transferência entre contas, Tarifas
   // Bancárias, Saque, IOF, Multas, Resgate/Juros de Investimentos etc.) —
   // confirmado com Lucas em 17/07/2026 (caso da RT: Receitas/Despesas
