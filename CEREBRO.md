@@ -5,7 +5,7 @@
 > e atualizá-lo no fim, sempre que houver commit/push de mudança no
 > dashboard, decisão tomada, ou bug encontrado/corrigido.
 >
-> Última atualização: 21/08/2026
+> Última atualização: 24/08/2026
 
 ---
 
@@ -22,10 +22,13 @@ Dashboard financeiro multi-empresa para 3 empresas: **KMNO Sports**,
 **RT Esportes e Eventos**, **NOVAH** (ex-Blue Line, rebranding concluído
 20/07/2026 — usar sempre `NOVAH` no código, nunca `BLUELINE`).
 
-- Front-end: `index.html` único (~18k+ linhas), vanilla JS + Chart.js,
+- Front-end: `index.html` único (~21k linhas), vanilla JS + Chart.js,
   hospedado no GitHub Pages.
-- Repo: **`Lceve/painel-financeiro`** (mudou de `LMC404-lang` em 21/08/2026 —
-  usar sempre o novo nome).
+- Repo: **`Lceve/painel-financeiro`** (username do GitHub trocado de novo
+  em 24/08/2026, de `LMC404-lang` pra `Lceve` — confirmado que push/pull
+  continuam funcionando sem reconfiguração, o GitHub redireciona sozinho.
+  Se algo quebrar depois, é o primeiro lugar a checar).
+
 - Backend: 4 projetos Supabase — KMNO (`enedbeguahicctwwhpmb`), Novah
   (`yppfzhptzcesmxiruaxk`), RT (`jdifejativsnghfxxeqe`), consolidado/dashboard
   (`ihekejwxdvipgldblskn`).
@@ -34,6 +37,12 @@ Dashboard financeiro multi-empresa para 3 empresas: **KMNO Sports**,
   (fonte única da verdade).
 - VPS: Hostinger Ubuntu 24.04, `srv1817879`, usuário `lucasadmin`, todo
   comando precisa de `sudo`.
+- **GitHub Actions**: todos os workflows automáticos foram desativados
+  (24/08/2026) — `dashboard-sync` e `omie-sync-kmno` (repo separado do
+  de conta corrente) rodavam a cada 2h em paralelo com o cron da VPS,
+  duplicando trabalho e gastando o limite de minutos (90% usado, quase
+  travando o repo). VPS é a **única** fonte de execução agora. Se algo
+  parar de sincronizar, primeiro checar o cron da VPS, não o GitHub.
 
 ## Regras de trabalho (sempre seguir)
 
@@ -49,6 +58,13 @@ Dashboard financeiro multi-empresa para 3 empresas: **KMNO Sports**,
 7. Comandos de VPS sempre com `sudo`.
 8. Ao final de qualquer sessão com commit/push, mudança de escopo, ou
    descoberta relevante → atualizar este arquivo antes de encerrar.
+9. **[NOVA, 24/08/2026] Regra de negócio antes de código.** Não aplicar
+   fix em produção baseado só em "o número bateu numa comparação" — isso
+   pode ser coincidência, não confirma a causa. Confirmar a regra de
+   negócio (cadastro do Omie, resposta do suporte, ou Lucas confirmando)
+   **antes** de escrever qualquer código. Motivo: nesta sessão um fix foi
+   aplicado, revertido, e retestado depois de confirmar com o suporte que
+   a lógica estava errada desde o início — retrabalho evitável.
 
 ## Aprendizados críticos (nunca esquecer)
 
@@ -59,13 +75,39 @@ Dashboard financeiro multi-empresa para 3 empresas: **KMNO Sports**,
 - **Categorias dinâmicas**: nomes de categoria (ex: "Transferências entre
   contas") vêm do Supabase em tempo de execução, não são hardcoded —
   filtrar por `cat.descricao` no JS, nunca buscar no arquivo estático.
-- **`buildArvoreNativaDre`**: valida em ~0,1% de precisão desde julho — é
-  a fonte primária pra DRE por Competência.
+- **`buildArvoreNativaDre`**: fonte primária pra DRE por Competência.
+  KMNO/Jun validada linha a linha em 24/08/2026 contra pivot nativo
+  exportado do Omie (ver pendência de Impostos abaixo pro detalhe
+  completo, conta por conta).
+- **NFe de nota de ENTRADA (compra) nunca compõe o DRE por Competência**
+  — confirmado com o suporte do Omie em 24/08/2026. Ela não é imposto
+  sobre venda, e o valor dela fica embutido no custo do estoque de um
+  jeito interno do Omie que só é replicável se sincronizarmos o módulo
+  de estoque (não sincronizamos, e não vamos — decisão do Lucas). Nota
+  de saída (venda) continua contando normalmente. **Não tentar de novo
+  "redirecionar" imposto de nota de compra pra nenhuma outra conta do
+  DRE — já foi tentado e revertido em 24/08/2026.**
+- **CMC de Remessa/Produtos usados em serviço**: opção configurável na
+  tela de gerar DRE no Omie ("Considerar o CMC das remessas" / "...dos
+  produtos utilizados na prestação de serviços"). Confirmado com Lucas
+  em 24/08/2026: **sempre fica desmarcada** nos relatórios de referência
+  usados pra comparação. Não é a causa de nenhum gap.
 - **`sudo cd` falha silenciosamente** na VPS — sempre usar
   `sudo bash -c "cd /path && comando"`.
 - **Escrever arquivos na VPS**: usar `sudo tee /path/arquivo > /dev/null`
   com heredoc — `sudo` com `>` de redirecionamento falha (redirect roda
   como não-root).
+- **Tabelas certas pra cada relatório**: DRE por Competência usa
+  `dash_accounts_receivable`/`dash_accounts_payable` (título,
+  `valor_documento`, data de registro/emissão). DFC por Caixa usa
+  `dash_financial_movements` (baixa real, `val_pago`, data de
+  pagamento — tem duplicação por parcela/baixa se usado pra
+  competência, então nunca usar essa tabela pra montar DRE).
+- **Fallback de categoria**: títulos com `codigo_categoria` nulo no
+  cadastro do Omie resolvem a categoria via `cod_titulo` batendo com
+  `dash_financial_movements` (mesmo título, categoria lá preenchida).
+  Mecanismo legítimo desde 20/08/2026, não é bug — some se você comparar
+  duas queries e uma não aplicar esse fallback.
 
 ## Links úteis
 
@@ -76,65 +118,116 @@ Dashboard financeiro multi-empresa para 3 empresas: **KMNO Sports**,
 
 ## PENDÊNCIAS ABERTAS
 
-### 🔴 Divergência de Impostos — DRE por Competência KMNO
+### 🔴 Divergência de Impostos/Custo — DRE por Competência KMNO
 
-Card diverge do relatório nativo Omie em 5 pontos por `codigo_dre`.
+Sessão de 24/08/2026 validou as **14 contas** do DRE nativo (KMNO,
+Jun/2026) linha a linha contra pivot exportado do Omie. Resultado:
 
-**1. Impostos (`1.01.02`)** — o mais investigado:
-- Excel nativo (por emissão e por registro, idênticos): Jun/2026 =
-  R$ 234.358,999991
-- Dashboard pós-fix de NFe cancelada: Jun/2026 = R$ 307.127
-- Diferença: ~R$ 72.768, **não muda antes/depois do fix**
+| Conta | Nativo | Nosso | Diferença | Status |
+|---|---|---|---|---|
+| Receita Bruta de Vendas | 902.596,83 | 909.486,63 | +6.889,80 | 🟡 sem causa |
+| Impostos | -234.359,00 | -233.357,63 | -1.001,36 | ✅ resolvido |
+| Deduções de Receita | -22.962,52 | -22.962,52 | 0 | ✅ resolvido |
+| Outras Receitas | 39.295,94 | 39.295,94 | 0 | ✅ já batia |
+| Receitas Financeiras | 178,33 | — | — | ⬜ não testado |
+| Custo Médio (CMC) das Vendas | -47.319,16 | -47.253,16 | +66,00 | ✅ já batia |
+| Custo dos Serviços Prestados | -508.048,07 | -446.383,85 | -61.664,22 | ❌ sem causa |
+| Outros Custos | 0 | — | — | ⬜ não testado |
+| Despesas Variáveis | -42.679,59 | -42.679,59 | 0 | ✅ já batia |
+| Recuperação Desp. Variáveis | 69,90 | 69,90 | 0 | ✅ já batia |
+| Despesas com Pessoal | -58.902,84 | -81.171,46 | -22.268,62 | 🟠 explicado |
+| Despesas Administrativas | -72.301,85 | -74.824,99 | -2.523,14 | 🟡 pista fraca |
+| Despesas Financeiras | -8.289,23 | -6.120,83 | +2.168,40 | 🟡 sem causa |
+| Despesas Vendas/Marketing | -17.337,25 | -17.337,25 | 0 | ✅ já batia |
+| Outros Tributos | -82.776,86 | -82.776,86 | 0 | ✅ já batia |
+| Ativos | -5.218,58 | -5.218,58 | 0 | ✅ resolvido |
 
-Fix aplicado 21/08/2026 (commit `d23a589`): exclui do somatório de
-imposto embutido na NFe (`buildArvoreNativaDre`, loop `nfeRows`) notas
-com `dt_cancelamento`, `denegada='S'`, ou `dt_inutilizacao` preenchidos.
-Validado: só 7 notas no período, R$1.342,99 de imposto excluído — fix
-correto, mas não é a causa principal da divergência.
+**✅ Resolvido — Impostos e Ativos**: bug de código real em
+`buildArvoreNativaDre` (~linha 5810): imposto embutido de NFe caía
+sempre em Impostos, sem checar `tipo_nf` (entrada/saída). Corrigido:
+`nfeRows` agora ignora nota de entrada (`tipo_nf='0'`) por completo — não
+soma imposto em NENHUMA conta do DRE (ver Aprendizados Críticos acima).
+Campo `tipo_nf` adicionado em `omie_nfe` (KMNO + Novah) e propagado pra
+`dash_nfe` — precisa fazer o mesmo pra RT quando o sync de NFe dela for
+corrigido (ver pendência RT abaixo). Commit `3bbf662`.
 
-RT não tem colunas `dt_cancelamento`/`denegada`/`dt_inutilizacao` em
-`omie_nfe` (só KMNO e Novah têm) — erro não bloqueante no sync, decisão
-de estender pra RT pendente.
+**✅ Resolvido — Deduções de Receita**: **não era bug, era cadastro do
+Omie**. Categoria "Serviços (Outras Facções)" (`2.01.02`, despesa real —
+KMNO paga a Novah por facção) estava com "Conta do DRE" = "(-) Deduções
+de Receita" (`1.01.03`) em vez de "Custo dos Serviços Prestados"
+(`1.21.02`). Corrigido direto no Omie (Categorias → Serviços) por Lucas
+em 24/08/2026, sincronizado (`sync-single.js categories --full` +
+`dashboard-sync`). Efeito: R$33.636,15/mês movidos de Deduções de
+Receita pra Custo dos Serviços.
 
-Pista não testada a fundo: "documents with exactly 3 lines per NFe number
-in Omie native export = false positive in DRE gap analysis" — parte do
-gap pode ser falso positivo de metodologia de comparação, não bug real.
+**🟠 Despesas com Pessoal — explicado, não é bug**: gap de R$22.268,62 =
+soma EXATA de 3 títulos de "PJ Comercial" (fornecedores 10400274766,
+10400274762, 10390862281) com `data_registro` NULA no Omie — caem em
+Jun via fallback pra `data_emissao`, mas o padrão de pares desses mesmos
+fornecedores sugere que a Data de Registro real (quando o Omie fechar)
+vai cair em Julho. Não corrigir — vai se resolver sozinho quando o Omie
+processar. Não é código nosso, não é cadastro errado.
 
-Categorias reais mapeadas pra `1.01.02` (KMNO): `2.06.03` (PIS/COFINS),
-`2.06.04` (Fundo Social FUMDES), `2.06.07` (ICMS — tem exclusão especial
-a partir de abr/2026, ver `KMNO_ICMS_RESIDUO_CATEGORIA` no código),
-`2.06.01` (DIFAL), `2.14.98` (Simples Nacional Parcelado).
+**❌ Custo dos Serviços Prestados — R$61.664,22 sem causa confirmada**.
+Hipóteses testadas e **descartadas** em 24/08/2026, todas com evidência:
+1. Redirecionar imposto de NFe de compra pra essa conta — **errado**,
+   confirmado pelo suporte Omie, revertido (ver Aprendizados Críticos).
+2. CMC de Remessa de Produtos — checkbox sempre desmarcada, não é isso.
+3. Rateio de categoria (título dividido em 2+ categorias) — não existe
+   nenhum título rateado em Jun/2026 pra KMNO.
+4. Duplicidade de título (mesmo documento + mesmo valor repetido) —
+   achado real mas pequeno (R$2.274,42, só taxas de cartão), não fecha
+   o gap.
 
-Query exploratória (não conclusiva, não considerou exclusão de ICMS
-resíduo nem gateway `1.04.96`): NFe com categoria = R$213.574,69;
-movements = -R$88.004,09; soma = R$125.570,60 — não bateu com nenhum dos
-dois números de referência.
+Resposta do suporte Omie (24/08/2026) deixa a porta aberta pra uma causa
+que não temos como testar: "a conta 1.21.02 pode incluir CMC (Custo
+Médio Contábil) calculado automaticamente sobre consumo de estoque,
+quando ativado" — mas a config verificada tá desmarcada, e mesmo se
+fosse isso, não temos estoque/inventário sincronizado (decisão
+consciente de não sincronizar, não vale a pena reconstruir isso).
+**Próximo passo, se retomar**: levar esse valor exato (R$61.664,22,
+Jun/2026, KMNO) pro suporte do Omie como exemplo concreto, perguntando
+o que compõe a conta além do título — não testar mais hipótese sem
+confirmação prévia (ver regra #9 acima).
 
-**Próximo passo**: testar com a lógica COMPLETA do dashboard
-(`fmCategFallback`, `extratoSemTitulo`, `isTituloExcluidoManualmenteKmno`,
-exclusão de ICMS resíduo, exclusão de gateway `1.04.96`), não soma
-simples de títulos.
+**🟡 Despesas Administrativas — pista fraca, não confirmada**: gap de
+R$2.523,14. Único candidato achado: um título de R$25.456,23 na
+categoria "Cartão Corporativo" (fatura consolidada, sem número de
+documento) — pode ser que o Omie nativo quebre isso por trás em várias
+categorias/contas (por transação da fatura), e nós contamos tudo numa
+linha só. Não confirmado — não temos detalhe item a item da fatura.
 
-**2. Outras Receitas (`1.11.01`)**: zerado em query simples, Omie mostra
-R$39k. Suspeita: vem de `extrato-sem-título`. Não testado.
+**🟡 Despesas Financeiras**: gap de R$2.168,40. Direção oposta (nosso
+valor é MENOS negativo — falta despesa, não sobra). Verificado: sem
+título/lançamento na borda do mês (nada em 30/06-01/07 fora do lugar).
+Sem pista até agora.
 
-**3. Custo Serviços (`1.21.02`)**: gap ~R$105k. Causa desconhecida.
+**🟡 Receita Bruta de Vendas**: gap de R$6.889,80. Verificado: sem
+duplicata, sem cancelado escondido, sem título com data nula. Sem pista.
 
-**4. Despesas Variáveis (`2.01.01`)**: gap ~R$11k. Bug pequeno confirmado
-não corrigido: em `buildResumoCompetenciaViaArvoreNativa` (~linha 6194),
-`despesasVariaveis = -soma('2.01.01') + soma('2.01.02')` trata
-Recuperação de Despesas Variáveis com sinal errado (~R$140/mês, efeito
-pequeno, não é a causa principal do gap).
+**⬜ Não testado ainda**: Receitas Financeiras (R$178,33), Outros Custos
+(R$0 nativo).
 
-**5. Despesas Pessoal/Administrativas (`2.11.01`/`2.11.02`)**: nosso
-valor mais NEGATIVO que o Omie — direção oposta, sugere miscategorização
-ou fallback de categoria faltando.
-
-Contexto adicional: Jun/2026 nosso ≈ -R$197k vs Omie ≈ -R$158k (gap
-~R$40k); Jul/2026 diverge ~R$320k incluindo inversão de sinal (nós
-mostramos prejuízo, Omie mostra lucro).
+**Ainda não validado**: Julho/2026 (só Junho foi comparado), e **Novah
+e RT no período ao vivo — zero testado**. O fix de `tipo_nf` afeta as
+duas (é código genérico), mas ninguém validou se ajudou, piorou, ou não
+mudou nada nelas. RT em particular provavelmente ainda tem problema de
+Impostos por causa da pendência de sync abaixo.
 
 ---
+
+### 🔴 RT — sync de NFe incompleto
+
+`omie_nfe` da RT nunca recebeu as colunas `dt_cancelamento`, `denegada`,
+`dt_inutilizacao`, `tipo_nf` que foram adicionadas pra KMNO e Novah
+(21/08 e 24/08/2026). O `dashboard-sync` (consolidador) dá erro toda vez
+que roda pra RT: `column omie_nfe.dt_cancelamento does not exist` — RT
+fica sem `dash_nfe` atualizado a cada rodada. Não bloqueante pro resto
+(RT continua sincronizando as outras tabelas normalmente), mas o
+Impostos/DRE da RT deve estar incompleto até isso ser corrigido.
+**Ação pendente**: rodar a mesma migration + mapear os 4 campos em
+`config/omie-tables.js` do repo de sync da RT.
+
 
 ### 🟡 DRE por CMC (novo card)
 
@@ -185,8 +278,6 @@ script de sync (paginar `ListarPosEstoque` e `ListarPedidos`, cruzar por
 Jun/2026 contra `PosicaoEstoque` pra validar contra referência esperada
 (não feito ainda); construir tela nova seguindo padrão visual do "Resumo
 (Grupo, R$)".
-
----
 
 ### 🟡 Faturador KMNO (projeto separado, não é o dashboard)
 
@@ -240,3 +331,9 @@ sempre checar com `ListarPedidos`); lote confiável máx ~110 itens;
 - `migration_metas.sql` — status de execução não confirmado.
 - `index (teste).html` órfão no repo — decisão de remover ou restaurar
   pendente.
+- 10 pares de títulos duplicados achados na categoria "Industrialização
+  Blue Line" (mesmo número de documento, valores diferentes, um com
+  Data de Registro preenchida e outro sem) — total R$2.838,88/mês.
+  Achado incidental durante a investigação de Custo de Serviços, nunca
+  reportado antes. Vale investigar/limpar num dia dedicado, não
+  urgente (valor pequeno, não é a causa de nenhum gap grande).
