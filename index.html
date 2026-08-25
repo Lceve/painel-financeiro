@@ -5808,17 +5808,16 @@ function buildArvoreNativaDre(empresa, categories, movements, meses, nfeRows, ex
   // não uma categoria fiscal separada. Isso exigiu sincronizar
   // compl.cCodCateg como codigo_categoria em dash_nfe (antes não vinha).
   const DRE_NATIVO_IMPOSTO_NFE_DESTINO = DRE_NATIVO_DESTINO_IMPOSTOS;
-  // FIX 24/08/2026 (pedido Lucas, bug real achado): antes, o imposto
-  // embutido de QUALQUER NFe (compra ou venda) caía sempre no bucket de
-  // Impostos, ignorando o codigo_dre da própria categoria da nota. Nota
-  // de entrada (tipo_nf='0', compra) não é imposto sobre venda — o
-  // destino certo é o codigo_dre da categoria da nota (ex: Custo
-  // Serviços). Nota de saída (tipo_nf='1') continua indo pra Impostos,
-  // como sempre foi. Nota sem tipo_nf ainda sincronizado (dado antigo,
-  // ou RT que ainda não tem essa coluna) mantém o comportamento antigo
-  // (Impostos), pra não quebrar nada que já funcionava.
+  // REVERTIDO 24/08/2026: o fix anterior (redirecionar imposto de NFe de
+  // entrada pro codigo_dre da categoria) foi desfeito depois de confirmar
+  // com o suporte do Omie que imposto embutido em nota de COMPRA não
+  // compõe nenhuma linha separada do DRE — ele fica embutido no custo do
+  // estoque internamente (mecanismo que não replicamos via NFe direto).
+  // Mantido só o filtro de tipo_nf='1' (saída/venda) pra Impostos, que
+  // continua correto — é exatamente o que já era antes de 17/07/2026.
   (nfeRows || []).forEach(n => {
     if (n._empresa !== empresa) return;
+    if (n.tipo_nf === '0') return; // nota de compra: nunca soma imposto no DRE (confirmado com suporte Omie 24/08)
     if (!n.codigo_categoria) return;
     const cat = catByCodigo[n.codigo_categoria];
     if (!cat || !cat.codigo_dre) return;
@@ -5829,11 +5828,10 @@ function buildArvoreNativaDre(empresa, categories, movements, meses, nfeRows, ex
     if (mesIdx < 0) return;
     const totalImposto = Number(n.valor_icms || 0) + Number(n.valor_pis || 0) + Number(n.valor_cofins || 0);
     if (!totalImposto) return;
-    const destino = (n.tipo_nf === '0') ? cat.codigo_dre : DRE_NATIVO_IMPOSTO_NFE_DESTINO;
     const labelCat = decodeHtmlEntities(cat.descricao || cat.codigo);
-    if (!valores[destino]) valores[destino] = {};
-    if (!valores[destino][labelCat]) valores[destino][labelCat] = new Array(meses.length).fill(0);
-    valores[destino][labelCat][mesIdx] += -totalImposto;
+    if (!valores[DRE_NATIVO_IMPOSTO_NFE_DESTINO]) valores[DRE_NATIVO_IMPOSTO_NFE_DESTINO] = {};
+    if (!valores[DRE_NATIVO_IMPOSTO_NFE_DESTINO][labelCat]) valores[DRE_NATIVO_IMPOSTO_NFE_DESTINO][labelCat] = new Array(meses.length).fill(0);
+    valores[DRE_NATIVO_IMPOSTO_NFE_DESTINO][labelCat][mesIdx] += -totalImposto;
   });
 
   // Extrato bancário sem título formal — mesma lógica de categoria→codigo_dre
@@ -11808,8 +11806,8 @@ async function sbPaged(path, empresaId, pageSize = 1000) {
 async function carregarDadosDreArvoreTodasEmpresas() {
   const empresas = ['RT', 'KMNO', 'NOVAH'];
   const catPath = 'dash_categories?select=codigo,descricao,conta_receita,conta_despesa,codigo_dre';
-  const recPath = 'dash_accounts_receivable?select=data_emissao,data_registro,data_vencimento,data_pagamento,data_previsao,valor_documento,valor_recebido,status_titulo,codigo_categoria,observacao,numero_documento,codigo_cliente_fornecedor,codigo_lancamento_omie';
-  const payPath = 'dash_accounts_payable?select=data_emissao,data_registro,data_vencimento,data_pagamento,data_previsao,valor_documento,status_titulo,codigo_categoria,observacao,numero_documento,codigo_lancamento_omie';
+  const recPath = 'dash_accounts_receivable?select=data_emissao,data_registro,data_vencimento,data_pagamento,data_previsao,valor_documento,valor_recebido,status_titulo,codigo_categoria,observacao,numero_documento,numero_documento_fiscal,codigo_cliente_fornecedor,codigo_lancamento_omie';
+  const payPath = 'dash_accounts_payable?select=data_emissao,data_registro,data_vencimento,data_pagamento,data_previsao,valor_documento,status_titulo,codigo_categoria,observacao,numero_documento,numero_documento_fiscal,codigo_lancamento_omie';
   // Fallback de categoria (20/08/2026): alguns títulos de payable/receivable
   // (folha — FGTS/GPS/PJ/PPR etc, mais comum na Novah) vêm com
   // codigo_categoria NULO do Omie, mesmo o MESMO título tendo a categoria
@@ -11825,7 +11823,16 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   // desde 21/08, mas nunca vinham nessa query — o filtro nunca excluía
   // nada de fato, sempre undefined. Adicionados aqui junto com tipo_nf
   // (novo, usado pra não jogar imposto de nota de compra em Impostos).
-  const nfePath = 'dash_nfe?select=id_nf,codigo_categoria,dt_emissao,valor_icms,valor_pis,valor_cofins,dt_cancelamento,denegada,dt_inutilizacao,tipo_nf';
+  // FIX 24/08/2026: numero_nf adicionado pra servir de 3º nível de
+  // fallback de categoria (ver categoriaPorNumeroNf mais abaixo) — título
+  // parcelado às vezes perde a categoria em ALGUMAS parcelas (a NFe em si
+  // mantém a categoria certa, mas nem toda parcela do Omie herda ela, e
+  // nem sempre a mesma parcela aparece em dash_financial_movements pro
+  // 1º fallback pegar). Achado real: nota nº000360892 (KMNO, Jun/2026,
+  // Textil Renauxview, R$109.746,07 em 5 parcelas) — só 2 das 5 parcelas
+  // tinham categoria resolvível antes desse fix, as outras 3 (R$65.847,63)
+  // ficavam de fora do DRE inteiro.
+  const nfePath = 'dash_nfe?select=id_nf,codigo_categoria,dt_emissao,valor_icms,valor_pis,valor_cofins,dt_cancelamento,denegada,dt_inutilizacao,tipo_nf,numero_nf';
   // Extrato bancário sem título formal (Transferência entre contas, Tarifas
   // Bancárias, Saque, IOF, Multas, Resgate/Juros de Investimentos etc.) —
   // confirmado com Lucas em 17/07/2026 (caso da RT: Receitas/Despesas
@@ -11989,8 +11996,22 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   (fmCategFallback || []).forEach(f => {
     categoriaPorTituloFallback.set(`${f._empresa}|${f.cod_titulo}`, f.cod_categoria);
   });
-  const resolverCategoriaComFallback = (empresa, codTitulo, categoriaOriginal) =>
-    categoriaOriginal || categoriaPorTituloFallback.get(`${empresa}|${codTitulo}`) || null;
+  // FIX 24/08/2026 (bug real achado, pedido Lucas "blindar pro futuro"):
+  // 3º nível de fallback, via numero_documento_fiscal do título batendo
+  // com numero_nf da NFe (mesma empresa). Cobre o caso de nota parcelada
+  // onde ALGUMAS parcelas ficam sem codigo_categoria E sem aparecer em
+  // dash_financial_movements (então o fallback #1 acima também não pega).
+  // "last wins" aqui também — mesmo padrão do fallback #1.
+  const categoriaPorNumeroNf = new Map();
+  (nfe || []).forEach(n => {
+    if (!n.numero_nf || !n.codigo_categoria) return;
+    categoriaPorNumeroNf.set(`${n._empresa}|${n.numero_nf}`, n.codigo_categoria);
+  });
+  const resolverCategoriaComFallback = (empresa, codTitulo, categoriaOriginal, numeroDocumentoFiscal) =>
+    categoriaOriginal
+    || categoriaPorTituloFallback.get(`${empresa}|${codTitulo}`)
+    || (numeroDocumentoFiscal ? categoriaPorNumeroNf.get(`${empresa}|${numeroDocumentoFiscal}`) : null)
+    || null;
 
   const unifiedMovementsNativo = [
     ...receivable.filter(r => r.status_titulo !== 'CANCELADO' && !DRE_NATIVO_DUPLICADOS_CONHECIDOS_IDS.has(Number(r.codigo_lancamento_omie)) && !isTituloExcluidoManualmenteKmno(r._empresa, r.codigo_lancamento_omie)).map(r => ({
@@ -11999,7 +12020,7 @@ async function carregarDadosDreArvoreTodasEmpresas() {
       natureza: 'R',
       val_pago: Number(r.valor_documento || 0),
       val_liquido: Number(r.valor_documento || 0),
-      cod_categoria: resolverCategoriaComFallback(r._empresa, r.codigo_lancamento_omie, r.codigo_categoria),
+      cod_categoria: resolverCategoriaComFallback(r._empresa, r.codigo_lancamento_omie, r.codigo_categoria, r.numero_documento_fiscal),
       omie_id: r.codigo_lancamento_omie,
       _empresa: r._empresa,
     })),
@@ -12009,7 +12030,7 @@ async function carregarDadosDreArvoreTodasEmpresas() {
       natureza: 'P',
       val_pago: Number(p.valor_documento || 0),
       val_liquido: Number(p.valor_documento || 0),
-      cod_categoria: resolverCategoriaComFallback(p._empresa, p.codigo_lancamento_omie, p.codigo_categoria),
+      cod_categoria: resolverCategoriaComFallback(p._empresa, p.codigo_lancamento_omie, p.codigo_categoria, p.numero_documento_fiscal),
       omie_id: p.codigo_lancamento_omie,
       _empresa: p._empresa,
     })),
