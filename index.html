@@ -9952,7 +9952,7 @@ function buildResumoNovah(B) {
   // saíram de uso_consumo e foram pra este bloco novo — soma aqui pra
   // não sair da conta (só existe/roda em meses ao vivo, igual o resto
   // desta função).
-  const custoServicosTerceiros = B.custo_servicos_terceiros.total;
+  const custoServicosTerceiros = (B.custo_servicos_terceiros || { total: 0 }).total;
   // FIX (11/08/2026, confirmado com Lucas): os custos de mão de obra de
   // produção (Acabamento/Corte/Rash/Costura Kimono/Bordado/Sublimação/
   // Desp.Pessoal Indústria) estavam sendo descontados DEPOIS da Margem
@@ -12068,6 +12068,19 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   // tudo a vencer) checados e são pessoas físicas reais (folha), não
   // mexidos.
   const FORNECEDOR_PREVISAO_BLUE_LINE_NOVAH = 2135507291;
+  // Exclusão de "Antecipação de Boletos" (25/08/2026, Novah): categorias
+  // 1.02.97 (recebimento, mapeada pra Receitas Financeiras) e 2.05.91 +
+  // 2.05.92 (pagamento, mapeadas pra Despesas Financeiras). Confirmado
+  // com 2 achados independentes que o relatório nativo não conta essas
+  // categorias no DRE por Competência — antecipação de boleto é
+  // movimento de caixa/saldo (adianta o recebimento de um título já
+  // reconhecido, ou paga uma taxa por isso), não gera receita/despesa
+  // nova. Testado: fecha Receitas Financeiras Jun/2026 (R$4.061,21 →
+  // R$0, nativo é R$0,02) e reduz o gap de Despesas Financeiras de
+  // R$10.782 pra R$785 (não fecha 100%, mas melhora 93%). Só existe
+  // essa categoria na Novah — confirmado que KMNO/RT não têm nada
+  // parecido, não afeta as outras 2 empresas.
+  const CATEGORIAS_ANTECIPACAO_BOLETO_NOVAH = new Set(['1.02.97', '2.05.91', '2.05.92']);
   // Data de Registro real (25/08/2026, ver comentário na fmRegistroPath
   // acima). Regra final, validada em 2 iterações:
   // 1) Se existe dt_registro real (via financial_movements), usa ela —
@@ -12137,7 +12150,7 @@ async function carregarDadosDreArvoreTodasEmpresas() {
       omie_id: p.codigo_lancamento_omie,
       _empresa: p._empresa,
     })),
-  ].filter(m => m.dt_registro);
+  ].filter(m => m.dt_registro && !(m._empresa === 'NOVAH' && CATEGORIAS_ANTECIPACAO_BOLETO_NOVAH.has(m.cod_categoria)));
   dreArvoreMovementsCacheNativo = unifiedMovementsNativo;
 }
 
@@ -12315,19 +12328,18 @@ const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho',
 
 // Seletor global de período: dois <input type="month"> (De / Até), mesmo
 // padrão já usado no card de árvore DRE. Substitui os antigos dropdowns
-// separados de mês e ano. Na primeira carga, De = Janeiro e Até = Dezembro
-// do ano do mês mais recente com dado (mostra o ano inteiro de cara, pra
-// não perder a visão de vários meses lado a lado). Quem analisa pode
-// estreitar manualmente pra um período mais específico se precisar.
+// separados de mês e ano. FIX (26/08/2026, pedido Lucas): De = Junho/2026
+// fixo (mês em que os dados ao vivo via Omie começaram — antes disso é
+// só Excel congelado) e Até = mês atual de verdade (hoje), não mais o
+// "mês mais recente com dado" nem o ano inteiro Jan-Dez.
 function populateGlobalPeriod(selectedMonth) {
   const inputDe = document.getElementById('globalPeriodDe');
   const inputAte = document.getElementById('globalPeriodAte');
-  const alvo = selectedMonth ? dayjs(selectedMonth + '-01') : dayjs();
   // Só define um valor inicial se os campos ainda estiverem vazios —
   // preserva a escolha do usuário em recargas subsequentes (ex: refresh
   // automático de dados sem o usuário ter mexido no período).
-  if (!inputDe.value) inputDe.value = alvo.startOf('year').format('YYYY-MM');
-  if (!inputAte.value) inputAte.value = alvo.endOf('year').format('YYYY-MM');
+  if (!inputDe.value) inputDe.value = '2026-06';
+  if (!inputAte.value) inputAte.value = dayjs().format('YYYY-MM');
 }
 
 // Retorna o período global selecionado como { de: dayjs, ate: dayjs } —
