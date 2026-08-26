@@ -5808,16 +5808,22 @@ function buildArvoreNativaDre(empresa, categories, movements, meses, nfeRows, ex
   // não uma categoria fiscal separada. Isso exigiu sincronizar
   // compl.cCodCateg como codigo_categoria em dash_nfe (antes não vinha).
   const DRE_NATIVO_IMPOSTO_NFE_DESTINO = DRE_NATIVO_DESTINO_IMPOSTOS;
-  // REVERTIDO 24/08/2026: o fix anterior (redirecionar imposto de NFe de
-  // entrada pro codigo_dre da categoria) foi desfeito depois de confirmar
-  // com o suporte do Omie que imposto embutido em nota de COMPRA não
-  // compõe nenhuma linha separada do DRE — ele fica embutido no custo do
-  // estoque internamente (mecanismo que não replicamos via NFe direto).
-  // Mantido só o filtro de tipo_nf='1' (saída/venda) pra Impostos, que
-  // continua correto — é exatamente o que já era antes de 17/07/2026.
+  // FIX 25/08/2026 (revertendo redirecionamento de 24/08, confirmado com
+  // suporte Omie): imposto embutido de nota de ENTRADA (tipo_nf='0',
+  // compra) NÃO compõe NENHUMA linha do DRE por Competência — fica
+  // embutido no custo do estoque via mecanismo interno do Omie (CMC),
+  // não replicável sem sincronizar estoque (decisão consciente: não
+  // vamos sincronizar). A tentativa de 24/08 de redirecionar esse valor
+  // pro codigo_dre da própria categoria da nota (em vez de descartar)
+  // melhorou Custo de Serviços mas quebrou Ativos (R$5.218,58 → 
+  // R$6.100,96, o valor exato do imposto redirecionado) — revertido.
+  // Nota de saída (tipo_nf='1') continua indo pra Impostos, como sempre
+  // foi. Nota sem tipo_nf ainda sincronizado (dado antigo, ou RT que
+  // ainda não tem essa coluna) mantém o comportamento antigo (Impostos),
+  // pra não quebrar nada que já funcionava.
   (nfeRows || []).forEach(n => {
     if (n._empresa !== empresa) return;
-    if (n.tipo_nf === '0') return; // nota de compra: nunca soma imposto no DRE (confirmado com suporte Omie 24/08)
+    if (n.tipo_nf === '0') return;
     if (!n.codigo_categoria) return;
     const cat = catByCodigo[n.codigo_categoria];
     if (!cat || !cat.codigo_dre) return;
@@ -11807,7 +11813,7 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   const empresas = ['RT', 'KMNO', 'NOVAH'];
   const catPath = 'dash_categories?select=codigo,descricao,conta_receita,conta_despesa,codigo_dre';
   const recPath = 'dash_accounts_receivable?select=data_emissao,data_registro,data_vencimento,data_pagamento,data_previsao,valor_documento,valor_recebido,status_titulo,codigo_categoria,observacao,numero_documento,numero_documento_fiscal,codigo_cliente_fornecedor,codigo_lancamento_omie';
-  const payPath = 'dash_accounts_payable?select=data_emissao,data_registro,data_vencimento,data_pagamento,data_previsao,valor_documento,status_titulo,codigo_categoria,observacao,numero_documento,numero_documento_fiscal,codigo_lancamento_omie';
+  const payPath = 'dash_accounts_payable?select=data_emissao,data_registro,data_vencimento,data_pagamento,data_previsao,valor_documento,status_titulo,codigo_categoria,observacao,numero_documento,numero_documento_fiscal,codigo_cliente_fornecedor,codigo_lancamento_omie';
   // Fallback de categoria (20/08/2026): alguns títulos de payable/receivable
   // (folha — FGTS/GPS/PJ/PPR etc, mais comum na Novah) vêm com
   // codigo_categoria NULO do Omie, mesmo o MESMO título tendo a categoria
@@ -11815,6 +11821,16 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   // esses títulos ficam de fora do DRE nativo inteiro (nunca acham
   // codigo_dre). Busca só cod_titulo+cod_categoria, sem trazer o resto.
   const fmCategPath = 'dash_financial_movements?select=cod_titulo,cod_categoria&cod_categoria=not.is.null&cod_titulo=not.is.null&cod_titulo=neq.0';
+  // Fallback de Data de Registro (25/08/2026): accounts_payable/receivable
+  // .data_registro não é confiável (campo não existe na resposta da API
+  // do Omie pra ListarContasPagar/ListarContasReceber -- confirmado com
+  // suporte). A Data de Registro real só existe via ListarMovimentos
+  // (dDtRegistro), que já é a fonte de dash_financial_movements.dt_registro.
+  // Usado como fallback SUAVE (não exclui título sem match -- isso foi
+  // tentado e piorou Custo de Serviços da KMNO, ver comentário mais
+  // abaixo perto de resolverDataRegistroComFallback): usa o registro
+  // real quando existe, senão cai pra emissão como sempre foi.
+  const fmRegistroPath = 'dash_financial_movements?select=cod_titulo,dt_registro&dt_registro=not.is.null&cod_titulo=not.is.null&cod_titulo=neq.0';
   // NFe: usado só pela árvore nativa (Impostos/Custo via redirecionamento
   // por tipo_nf), pra somar ICMS/PIS/COFINS embutidos na nota — ver
   // comentário mais abaixo sobre DRE_NATIVO_IMPOSTO_NFE_CODIGO_DRE.
@@ -11823,16 +11839,14 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   // desde 21/08, mas nunca vinham nessa query — o filtro nunca excluía
   // nada de fato, sempre undefined. Adicionados aqui junto com tipo_nf
   // (novo, usado pra não jogar imposto de nota de compra em Impostos).
-  // FIX 24/08/2026: numero_nf adicionado pra servir de 3º nível de
-  // fallback de categoria (ver categoriaPorNumeroNf mais abaixo) — título
-  // parcelado às vezes perde a categoria em ALGUMAS parcelas (a NFe em si
-  // mantém a categoria certa, mas nem toda parcela do Omie herda ela, e
-  // nem sempre a mesma parcela aparece em dash_financial_movements pro
-  // 1º fallback pegar). Achado real: nota nº000360892 (KMNO, Jun/2026,
-  // Textil Renauxview, R$109.746,07 em 5 parcelas) — só 2 das 5 parcelas
-  // tinham categoria resolvível antes desse fix, as outras 3 (R$65.847,63)
-  // ficavam de fora do DRE inteiro.
   const nfePath = 'dash_nfe?select=id_nf,codigo_categoria,dt_emissao,valor_icms,valor_pis,valor_cofins,dt_cancelamento,denegada,dt_inutilizacao,tipo_nf,numero_nf';
+  // NOTA (25/08/2026): accounts_payable/receivable.data_registro não é
+  // confiável -- confirmado com suporte Omie que o campo não existe na
+  // resposta de ListarContasPagar/ListarContasReceber, só via
+  // ListarMovimentos (dDtRegistro = dash_financial_movements.dt_registro).
+  // Tentamos usar isso como fallback aqui e reverter, ver comentário
+  // detalhado mais abaixo perto de unifiedMovementsNativo -- ajuda
+  // Despesas Administrativas mas piora Custo de Serviços, não aplicado.
   // Extrato bancário sem título formal (Transferência entre contas, Tarifas
   // Bancárias, Saque, IOF, Multas, Resgate/Juros de Investimentos etc.) —
   // confirmado com Lucas em 17/07/2026 (caso da RT: Receitas/Despesas
@@ -11883,11 +11897,12 @@ async function carregarDadosDreArvoreTodasEmpresas() {
     }
   };
 
-  const [categories, receivable, payable, fmCategFallback, cmvProdutos, fatUnidades, financiamentos, parcelas, inadimplencia, nfe, extratoSemTitulo, cmcVendas] = await Promise.all([
+  const [categories, receivable, payable, fmCategFallback, fmRegistroFallback, cmvProdutos, fatUnidades, financiamentos, parcelas, inadimplencia, nfe, extratoSemTitulo, cmcVendas] = await Promise.all([
     buscarPorEmpresa(catPath),
     buscarPorEmpresa(recPath),
     buscarPorEmpresa(payPath),
     buscarPorEmpresa(fmCategPath),
+    buscarPorEmpresa(fmRegistroPath),
     buscarPorEmpresa(cmvPath),
     buscarPorEmpresa(fatUnidPath),
     buscarPorEmpresa(finPath),
@@ -11996,12 +12011,15 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   (fmCategFallback || []).forEach(f => {
     categoriaPorTituloFallback.set(`${f._empresa}|${f.cod_titulo}`, f.cod_categoria);
   });
-  // FIX 24/08/2026 (bug real achado, pedido Lucas "blindar pro futuro"):
-  // 3º nível de fallback, via numero_documento_fiscal do título batendo
-  // com numero_nf da NFe (mesma empresa). Cobre o caso de nota parcelada
-  // onde ALGUMAS parcelas ficam sem codigo_categoria E sem aparecer em
-  // dash_financial_movements (então o fallback #1 acima também não pega).
-  // "last wins" aqui também — mesmo padrão do fallback #1.
+  // 3º nível de fallback de categoria (25/08/2026, escrito em sessão
+  // anterior, nunca commitado até agora): nota parcelada onde algumas
+  // parcelas perdem codigo_categoria E não aparecem em
+  // financial_movements (bug de sincronização do Omie, parcela não
+  // herda categoria da nota-mãe de forma consistente). Cruza
+  // numero_documento_fiscal do título com numero_nf da NFe (mesma
+  // empresa) — chave exata. Achado real: nota Textil Renauxview
+  // 000360892 (R$109.746,07, Tecido Trançado) parcelada em 5x, 3
+  // parcelas (R$65.847,63) ficavam 100% invisíveis pro DRE sem isso.
   const categoriaPorNumeroNf = new Map();
   (nfe || []).forEach(n => {
     if (!n.numero_nf || !n.codigo_categoria) return;
@@ -12013,10 +12031,95 @@ async function carregarDadosDreArvoreTodasEmpresas() {
     || (numeroDocumentoFiscal ? categoriaPorNumeroNf.get(`${empresa}|${numeroDocumentoFiscal}`) : null)
     || null;
 
+  // NOTA (25/08/2026): tentamos usar fmRegistroFallback (Data de Registro
+  // real via dash_financial_movements, já que accounts_payable/receivable
+  // .data_registro não é confiável — ver comentário na fmRegistroPath
+  // acima) pra resolver a Data de Registro de cada título, excluindo da
+  // árvore quem não tem baixa registrada ainda. Testado via SQL: ajuda
+  // Despesas Administrativas (gap R$2.464→R$730), mas PIORA MUITO Custo
+  // de Serviços (a maioria dos títulos de Tecido Trançado/Ripstop nunca
+  // aparece em financial_movements com registro, mesmo pagos — mesmo
+  // que estejam corretamente incluídos no nativo). NÃO APLICADO por
+  // enquanto — mantido `data_registro || data_emissao` como estava.
+  // Ver pendência de Despesas Administrativas pra retomar isso separado,
+  // sem misturar com a mudança de categoria abaixo (que já é segura).
+  // Exclusão cirúrgica (24/08/2026, Lucas confirmou): cliente 2074008888
+  // ("(PREVISAO) GB" = Gracie Barra) na Novah é um placeholder de
+  // previsão, não venda real — inflava Receita Bruta de Vendas em
+  // R$531.917,00/mês (Jun/2026). Confirmado por SQL: excluindo só esse
+  // cliente (não a lista inteira de isClientePrevisao(), que reabriria
+  // a exceção do cliente 2074032429 "KMNO (PREVISÃO)" já corrigida em
+  // 17/07/2026), o gap fecha exato. Exclusão feita aqui, específica pra
+  // Novah, sem tocar em isClientePrevisao() nem em nenhum outro lugar
+  // que já a usa.
+  const CLIENTE_PREVISAO_GB_NOVAH = 2074008888;
+  // Fornecedor placeholder de previsão orçamentária (25/08/2026): cadastro
+  // no Omie chama literalmente "PREVISÃO BLUE LINE" (código 2135507291,
+  // já constava em PREVISAO_CODIGOS_CLIENTE_POR_EMPRESA mas nunca tinha
+  // sido excluído do lado de CONTAS A PAGAR — só o lado de cliente/receita
+  // era filtrado). Padrão confirmado: títulos redondos, sem número de
+  // documento, todos "A Vencer", lançados recorrentemente (mesmo padrão
+  // se repete mês a mês, Jun-Set/2026 pelo menos), nunca pagos, só em
+  // Custo de Serviços (Salários/Hora Extra/Matéria-Prima/Industrialização
+  // — orçamento previsto da produção, não despesa real). Confirmado
+  // visualmente no Omie: Fornecedor = "PREVISÃO BLUE LINE". Verificado
+  // que não afeta nenhum mês antes de Jun/2026 (primeiro título é
+  // 15/06/2026). Outros 2 fornecedores com padrão parecido (sem doc,
+  // tudo a vencer) checados e são pessoas físicas reais (folha), não
+  // mexidos.
+  const FORNECEDOR_PREVISAO_BLUE_LINE_NOVAH = 2135507291;
+  // Data de Registro real (25/08/2026, ver comentário na fmRegistroPath
+  // acima). Regra final, validada em 2 iterações:
+  // 1) Se existe dt_registro real (via financial_movements), usa ela —
+  //    é o mês de competência de verdade (ex: DAS da RT, emitido em
+  //    Julho mas com registro real em Junho — a competência do imposto
+  //    é sempre o mês anterior à emissão).
+  // 2) Senão, se o título já foi PAGO, usa a emissão como aproximação —
+  //    sabemos que existe um registro real (foi processado), só não
+  //    sincronizou; não faz sentido excluir um título pago.
+  // 3) Senão, se tem número de documento (nota fiscal formal anexada),
+  //    também usa a emissão — é despesa já faturada de verdade, só
+  //    ainda não paga (ex: parcela futura de nota já emitida).
+  // 4) Senão (nunca pago E sem nota fiscal — normalmente um lançamento
+  //    manual/estimado, tipo "PJ Comercial" da KMNO ou "Mão de Obra -
+  //    Facções" da RT sem documento), EXCLUI do mês — não tem
+  //    competência real ainda definida.
+  // Validado via SQL antes de aplicar: fecha Despesas Administrativas
+  // da KMNO exato (R$72.301,85) e Custo de Serviços da RT exato
+  // (R$68.292,25), e melhora (não piora) Custo de Serviços da KMNO.
+  const registroPorTituloFallback = new Map();
+  (fmRegistroFallback || []).forEach(f => {
+    registroPorTituloFallback.set(`${f._empresa}|${f.cod_titulo}`, f.dt_registro);
+  });
+  const resolverDataRegistroComFallback = (empresa, codTitulo, dataEmissao, statusTitulo, numeroDocumento) => {
+    const registroReal = registroPorTituloFallback.get(`${empresa}|${codTitulo}`);
+    if (registroReal) return registroReal;
+    if (statusTitulo === 'PAGO') return dataEmissao;
+    if (numeroDocumento) return dataEmissao;
+    return null;
+  };
+  // FIX 25/08/2026 (achado tarde da noite, testando no navegador): a
+  // regra acima (excluir título sem nota fiscal E nunca pago) funciona
+  // bem pro lado de PAGAMENTO (fornecedor) — resolveu Despesas
+  // Administrativas da KMNO e Custo de Serviços da RT sem quebrar nada.
+  // Mas aplicada ao lado de RECEBIMENTO ela causa uma regressão real:
+  // Receita Bruta da KMNO caiu de ~R$920k (esperado) pra ~R$855k — não
+  // existe status "PAGO" em accounts_receivable (o status de título
+  // recebido se chama "RECEBIDO"), então a checagem `statusTitulo ===
+  // 'PAGO'` nunca bate pra nenhum recebível, e título recebido sem nota
+  // fiscal cadastrada ficava sendo excluído por engano. Testado via
+  // SQL: a versão SUAVE (registro real → senão emissão, sem excluir
+  // nada) pro lado de recebimento dá R$920.405,69, muito mais próximo
+  // do nativo (R$902.596,83, gap conhecido de ~R$18k já documentado)
+  // do que a versão com exclusão (R$854.820). Por isso: recebível usa
+  // só a versão suave (sem o 3º/4º nível); pagável continua com a
+  // regra completa de 4 níveis.
+  const resolverDataRegistroReceivable = (empresa, codTitulo, dataEmissao) =>
+    registroPorTituloFallback.get(`${empresa}|${codTitulo}`) || dataEmissao;
   const unifiedMovementsNativo = [
-    ...receivable.filter(r => r.status_titulo !== 'CANCELADO' && !DRE_NATIVO_DUPLICADOS_CONHECIDOS_IDS.has(Number(r.codigo_lancamento_omie)) && !isTituloExcluidoManualmenteKmno(r._empresa, r.codigo_lancamento_omie)).map(r => ({
+    ...receivable.filter(r => r.status_titulo !== 'CANCELADO' && !DRE_NATIVO_DUPLICADOS_CONHECIDOS_IDS.has(Number(r.codigo_lancamento_omie)) && !isTituloExcluidoManualmenteKmno(r._empresa, r.codigo_lancamento_omie) && !(r._empresa === 'NOVAH' && Number(r.codigo_cliente_fornecedor) === CLIENTE_PREVISAO_GB_NOVAH)).map(r => ({
       dt_emissao: r.data_emissao,
-      dt_registro: r.data_registro,
+      dt_registro: resolverDataRegistroReceivable(r._empresa, r.codigo_lancamento_omie, r.data_emissao),
       natureza: 'R',
       val_pago: Number(r.valor_documento || 0),
       val_liquido: Number(r.valor_documento || 0),
@@ -12024,9 +12127,9 @@ async function carregarDadosDreArvoreTodasEmpresas() {
       omie_id: r.codigo_lancamento_omie,
       _empresa: r._empresa,
     })),
-    ...payable.filter(p => p.status_titulo !== 'CANCELADO' && !DRE_NATIVO_DUPLICADOS_CONHECIDOS_IDS.has(Number(p.codigo_lancamento_omie))).map(p => ({
+    ...payable.filter(p => p.status_titulo !== 'CANCELADO' && !DRE_NATIVO_DUPLICADOS_CONHECIDOS_IDS.has(Number(p.codigo_lancamento_omie)) && !(p._empresa === 'NOVAH' && Number(p.codigo_cliente_fornecedor) === FORNECEDOR_PREVISAO_BLUE_LINE_NOVAH)).map(p => ({
       dt_emissao: p.data_emissao,
-      dt_registro: p.data_registro,
+      dt_registro: resolverDataRegistroComFallback(p._empresa, p.codigo_lancamento_omie, p.data_emissao, p.status_titulo, p.numero_documento),
       natureza: 'P',
       val_pago: Number(p.valor_documento || 0),
       val_liquido: Number(p.valor_documento || 0),
@@ -12034,7 +12137,7 @@ async function carregarDadosDreArvoreTodasEmpresas() {
       omie_id: p.codigo_lancamento_omie,
       _empresa: p._empresa,
     })),
-  ];
+  ].filter(m => m.dt_registro);
   dreArvoreMovementsCacheNativo = unifiedMovementsNativo;
 }
 
