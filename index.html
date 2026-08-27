@@ -5915,14 +5915,20 @@ function buildArvoreNativaDreConsolidado(categories, movements, meses, nfeRows, 
 }
 
 function buildArvoreNativaDre(empresa, categories, movements, meses, nfeRows, extratoSemTitulo, cmcVendas) {
-  // Exclusão pontual (20/08/2026, confirmado com Lucas): "Transferência
-  // entre contas" (1.04.04, KMNO) é movimento de balanço entre contas da
-  // própria empresa, não receita/despesa real — mas o cadastro dessa
-  // categoria no Omie tem codigo_dre preenchido, então sem essa exclusão
-  // ela entraria indevidamente no DRE nativo. Corrigido no código em vez
-  // de alterar o cadastro no Omie (mesmo padrão já usado pra Adiantamento
-  // de Clientes/Dividendo Sócio em outros blocos deste arquivo).
-  const CATEGORIAS_EXCLUIDAS_DRE_NATIVO = { KMNO: ['1.04.04'] };
+  // REVERTIDO 28/08/2026 (pedido Lucas, confirmado com print real do
+  // nativo): a exclusão de "Transferência entre contas" (1.04.04, KMNO,
+  // aplicada em 20/08/2026) estava ERRADA — o relatório nativo do Omie
+  // ("01. Outras Receitas") CONTA essa transferência normalmente.
+  // Confirmado batendo exato: KMNO Jun/2026, nativo R$39.295,94 = soma
+  // de Transferência entre contas (R$25.456,23) + Juros Recebidos
+  // (R$10.346,48) + Outras Entradas (R$3.490,70) + Rendimentos de
+  // Aplicações (R$2,53), via extrato sem título (dash_current_account_
+  // transactions, origem EXTR, cod_titulo nulo). Sem essa categoria a
+  // soma batia só ~R$13.840, um gap de ~R$25.456 que explicava quase
+  // todo o gap do Total Geral do mês. CATEGORIAS_EXCLUIDAS_DRE_NATIVO
+  // mantida vazia (não removida do código) caso surja outra exclusão
+  // pontual real no futuro — só o item 1.04.04 saiu da lista.
+  const CATEGORIAS_EXCLUIDAS_DRE_NATIVO = {};
   const catByCodigo = {};
   (categories || []).forEach(c => {
     if (c._empresa !== empresa || !c.codigo_dre) return;
@@ -12277,6 +12283,20 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   // tudo a vencer) checados e são pessoas físicas reais (folha), não
   // mexidos.
   const FORNECEDOR_PREVISAO_BLUE_LINE_NOVAH = 2135507291;
+  // Exclusão "Industrialização Blue Line" sem Data de Registro real
+  // (27/08/2026, KMNO): confirmado com Julho/2026 — dos 21 títulos dessa
+  // categoria/fornecedor (10357859967), só 1 tem Data de Registro real
+  // (via financial_movements) e bate EXATO com o nativo (R$664,30). Os
+  // outros 20 (R$11.109,30) nunca foram pagos (status A Vencer/Atrasado)
+  // e não têm registro real, mas TÊM número de nota fiscal — então caem
+  // na regra #3 de `resolverDataRegistroComFallback` (nota fiscal →
+  // usa emissão), sendo contados indevidamente. Pra esse fornecedor
+  // específico, "ter nota fiscal" não é sinal confiável de competência
+  // confirmada (diferente de outras contas onde essa regra funciona
+  // bem) — por isso exclusão pontual em vez de mudar a regra geral (que
+  // já está calibrada certo pra Despesas Administrativas KMNO e Custo
+  // de Serviços/Impostos RT, ver `aprendizado-api-data-registro-nao-existe`).
+  const FORNECEDOR_INDUSTRIALIZACAO_BLUE_LINE_KMNO = 10357859967;
   // Exclusão de "Antecipação de Boletos" (25/08/2026, Novah): categorias
   // 1.02.97 (recebimento, mapeada pra Receitas Financeiras) e 2.05.91 +
   // 2.05.92 (pagamento, mapeadas pra Despesas Financeiras). Confirmado
@@ -12366,7 +12386,7 @@ async function carregarDadosDreArvoreTodasEmpresas() {
       omie_id: r.codigo_lancamento_omie,
       _empresa: r._empresa,
     })),
-    ...payable.filter(p => p.status_titulo !== 'CANCELADO' && !DRE_NATIVO_DUPLICADOS_CONHECIDOS_IDS.has(Number(p.codigo_lancamento_omie)) && !(p._empresa === 'NOVAH' && Number(p.codigo_cliente_fornecedor) === FORNECEDOR_PREVISAO_BLUE_LINE_NOVAH)).map(p => ({
+    ...payable.filter(p => p.status_titulo !== 'CANCELADO' && !DRE_NATIVO_DUPLICADOS_CONHECIDOS_IDS.has(Number(p.codigo_lancamento_omie)) && !(p._empresa === 'NOVAH' && Number(p.codigo_cliente_fornecedor) === FORNECEDOR_PREVISAO_BLUE_LINE_NOVAH) && !(p._empresa === 'KMNO' && Number(p.codigo_cliente_fornecedor) === FORNECEDOR_INDUSTRIALIZACAO_BLUE_LINE_KMNO && p.status_titulo !== 'PAGO' && !registroPorTituloFallback.has(`KMNO|${p.codigo_lancamento_omie}`))).map(p => ({
       dt_emissao: p.data_emissao,
       dt_registro: resolverDataRegistroComFallback(p._empresa, p.codigo_lancamento_omie, p.data_emissao, p.status_titulo, p.numero_documento, p.codigo_categoria),
       natureza: 'P',
