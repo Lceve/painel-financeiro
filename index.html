@@ -45,6 +45,61 @@
     padding: 48px 32px 80px;
   }
 
+  /* ===== MENU LATERAL (pedido 27/08/2026, ajustado 27/08/2026 duas
+     vezes — 1ª: sem caixa geral por trás de tudo; 2ª: cada item vira um
+     botão-pílula individual, igual visual do .btn-back "Voltar para o
+     Menu" que já existe no dashboard — fundo leve, borda, cantos
+     arredondados, fonte monoespaçada). Fica fixo na lateral esquerda,
+     não rola com a página. Quando uma view está ativa, o item
+     correspondente troca o texto pra "BI - Principal" e funciona como
+     botão de voltar (clicar nele leva de volta pro viewMenu). Some
+     abaixo de 900px — comportamento mobile ainda não definido pelo
+     Lucas. */
+  body { padding-left: 0; }
+  .side-nav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 230px;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 24px;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+  }
+  .side-nav-item {
+    background: #F2EDEC;
+    border: 1px solid var(--line);
+    color: var(--bone);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 13px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: all 0.15s;
+  }
+  .side-nav-item:hover {
+    background: rgba(243, 239, 230, 0.06);
+    border-color: var(--blue-belt-light);
+    color: var(--blue-belt-light);
+  }
+  .side-nav-item.active {
+    border-color: var(--blue-belt-light);
+    color: var(--blue-belt-light);
+    font-weight: 600;
+  }
+  @media (max-width: 900px) {
+    .side-nav { display: none; }
+    body { padding-left: 0; }
+  }
+
   /* ---------- header ---------- */
   header {
     display: flex;
@@ -2525,6 +2580,12 @@
 
 <div class="wrap hidden" id="dashboardWrap">
 
+  <!-- ===== MENU LATERAL FIXO (pedido 27/08/2026) — preenchido por
+       renderSideNav(), chamado em showDashboard() e a cada switchView().
+       position:fixed, então fica fora do fluxo do .wrap — não afeta
+       max-width/centralização do conteúdo. ===== -->
+  <nav class="side-nav" id="sideNav"></nav>
+
   <header>
     <div>
       <div class="eyebrow" id="companyEyebrow">RT &middot; Esportes e Eventos</div>
@@ -2794,76 +2855,11 @@
 
 
 
-    <div class="nav-menu-grid">
-
-      <div class="nav-card" onclick="switchView('viewDfcArvore')">
-        <div>
-          <div class="nav-card-title">DRE por Caixa</div>
-          <div class="nav-card-desc">Resumo executivo do Grupo, Bancos, Prova Real dos Caixas e Fluxo de Caixa por Categoria — tudo o que é caixa/DFC num lugar só.</div>
-        </div>
-      </div>
-
-      <!-- Cópia placeholder do "DRE por Caixa" (pedido: "duplicar o card
-           DRE por Caixa, sem informações, só com placeholder") — mesmo
-           layout, ids renomeados com sufixo "Copia", sem nenhuma função
-           de render ligada. Base pra discutir o novo formato antes de
-           decidir o que entra aqui (provável candidato: reconstrução do
-           DRE por Competência no mesmo layout do DRE por Caixa). -->
-      <div class="nav-card" onclick="switchView('viewDfcArvoreCopia')">
-        <div>
-          <div class="nav-card-title">DRE por Competência</div>
-          <div class="nav-card-desc">Mesmo layout do DRE por Caixa, mas com Receita Bruta/CMV/Margem/EBITDA/Saldo Líquido calculados por competência (data de registro/emissão). Sem gráfico e sem os blocos de banco/prova real.</div>
-        </div>
-      </div>
-
-
-      <!-- Novo card pedido na reunião 21.07 ("Impostos e Análises"). Dados
-           hoje são os da planilha (Jan-Mai/26 Excel, copiados 1:1) — ainda
-           sem pipeline vivo do Omie pra Impostos mês a mês; ver nota no
-           topo da view. -->
-      <div class="nav-card" onclick="switchView('viewImpostos')">
-        <div>
-          <div class="nav-card-title">Impostos e Análises</div>
-          <div class="nav-card-desc">IRPJ, CSLL, PIS, COFINS, Difal e ICMS mês a mês x Receita Bruta (KMNO).</div>
-        </div>
-      </div>
-
-      <!-- Novo nav-card placeholder pedido por Lucas (03/08/2026) — sem
-           dados ainda, aguardando definição de fonte (ver viewSaidasEntradasPecas). -->
-      <div class="nav-card" onclick="switchView('viewSaidasEntradasPecas')">
-        <div>
-          <div class="nav-card-title">Saídas e Entradas R$ x Peças Faturadas</div>
-          <div class="nav-card-desc">Grupo (KMNO + Novah + RT) — em construção.</div>
-        </div>
-      </div>
-
-      <!-- Novo card "INDICADORES" (pedido 19/08/2026) — 10 seções, ~85
-           indicadores, todos manuais (KMNO/Novah/RT Real+Meta), sem
-           coluna Grupo por enquanto. Começando só com a estrutura +
-           seção Liquidez pra validar o mecanismo de edição. -->
-      <div class="nav-card" onclick="switchView('viewIndicadores')">
-        <div>
-          <div class="nav-card-title">Indicadores</div>
-          <div class="nav-card-desc">KMNO, Novah e RT — Real x Meta, preenchimento manual.</div>
-        </div>
-      </div>
-
-      <!-- Novo card "DRE por CMC" (pedido 26/08/2026) — mesma cascata do
-           "Resumo (Grupo, R$)" (DRE por Caixa), trocando CMV (por
-           categoria financeira) por CMC real de estoque (nCMC × qtd
-           vendida, calculado automaticamente pelo Omie por produto).
-           Só KMNO tem dado sincronizado hoje (cmcVendasPorEmpresaCache) —
-           Novah/RT ficam de fora até o sync ser estendido pra elas.
-           v1: só meses ao vivo (Jun/2026+), sem AV%/drill-down/receita
-           oficial — ver renderResumoCmcKmno. -->
-      <div class="nav-card" onclick="switchView('viewDreCmc')">
-        <div>
-          <div class="nav-card-title">DRE por CMC</div>
-          <div class="nav-card-desc">KMNO — mesma cascata do Resumo (Grupo, R$), com o custo de estoque real (CMC) no lugar do CMV por categoria.</div>
-        </div>
-      </div>
-
-    </div>
+    <!-- Grid de nav-cards removido (27/08/2026) — navegação duplicada
+         pelo menu lateral fixo (#sideNav / SIDE_NAV_ITEMS). Os 6 cards
+         (DRE por Caixa/Competência/CMV, Impostos, Saídas/Peças,
+         Indicadores) saíram; o resumo executivo do Grupo (acima) e o
+         resto da view continuam iguais. -->
 
   </div>
 
@@ -3888,7 +3884,37 @@ const VIEW_DISPLAY_NAMES = {
   viewDreCmc: 'DRE por CMC',
 };
 
+// ===== MENU LATERAL FIXO (pedido 27/08/2026) =====
+// Mesma lista/ordem dos nav-cards da home (DRE por Caixa → Competência →
+// CMV → Impostos → Saídas/Peças → Indicadores). Quando o item é o da
+// view ativa no momento, o texto vira "BI - Principal" e o clique volta
+// pro viewMenu (funciona como botão de voltar); os outros mantêm o
+// nome normal e levam pra própria view ao clicar.
+const SIDE_NAV_ITEMS = [
+  { viewId: 'viewDfcArvore', label: 'DRE por Caixa' },
+  { viewId: 'viewDfcArvoreCopia', label: 'DRE por Competência' },
+  { viewId: 'viewDreCmc', label: 'DRE por CMV' },
+  { viewId: 'viewImpostos', label: 'Impostos e Análises' },
+  { viewId: 'viewSaidasEntradasPecas', label: 'Saídas e Entradas' },
+  { viewId: 'viewIndicadores', label: 'Indicadores' }
+];
+
+function renderSideNav(activeViewId) {
+  const nav = document.getElementById('sideNav');
+  if (!nav) return;
+  nav.innerHTML = '';
+  SIDE_NAV_ITEMS.forEach(item => {
+    const isActive = activeViewId === item.viewId;
+    const el = document.createElement('div');
+    el.className = 'side-nav-item' + (isActive ? ' active' : '');
+    el.textContent = isActive ? 'BI - Principal' : item.label;
+    el.onclick = () => switchView(isActive ? 'viewMenu' : item.viewId);
+    nav.appendChild(el);
+  });
+}
+
 function switchView(viewId, options = {}) {
+  renderSideNav(viewId);
   const { fromPopState = false } = options;
 
   // 1. Esconde todas as views ativas
@@ -4258,17 +4284,20 @@ async function handleAccessRequest(e) {
 function showDashboard() {
   document.getElementById('loginOverlay').classList.add('hidden');
   document.getElementById('dashboardWrap').classList.remove('hidden');
+  renderSideNav('viewMenu');
 
-  // Período padrão = Janeiro até o mês atual real (pedido Lucas 30/07 —
-  // antes era só o mês atual sozinho, ex: Julho-Julho). Setado
-  // explicitamente aqui em vez de confiar só no fallback de
-  // getSelectedPeriodRange() — o navegador pode manter um valor antigo
-  // nos campos De/Até de uma sessão anterior (autofill/cache do
-  // formulário), fazendo o dashboard "abrir em dezembro" mesmo sem
-  // nenhum código definindo isso de propósito (pedido reunião 23/07).
+  // Período padrão = Junho até o mês atual real (pedido Lucas 27/08 —
+  // antes era Janeiro; Junho é o início dos dados ao vivo do Omie/
+  // Supabase, Jan-Mai é só congelado do Excel, então faz mais sentido
+  // como padrão de abertura). Setado explicitamente aqui em vez de
+  // confiar só no fallback de getSelectedPeriodRange() — o navegador
+  // pode manter um valor antigo nos campos De/Até de uma sessão
+  // anterior (autofill/cache do formulário), fazendo o dashboard "abrir
+  // em dezembro" mesmo sem nenhum código definindo isso de propósito
+  // (pedido reunião 23/07).
   const mesAtual = dayjs().format('YYYY-MM');
-  const janeiroDoAno = dayjs().startOf('year').format('YYYY-MM');
-  document.getElementById('globalPeriodDe').value = janeiroDoAno;
+  const junhoDoAno = dayjs().month(5).startOf('month').format('YYYY-MM');
+  document.getElementById('globalPeriodDe').value = junhoDoAno;
   document.getElementById('globalPeriodAte').value = mesAtual;
 
   // Update user info
@@ -6350,12 +6379,68 @@ function buildResumoCompetenciaViaArvoreNativa(empresaFiltro, monthStart, monthE
   const refis = 0;
   const saldoLiquido = lucroLiquido - distribuicao - capex - refis;
 
+  // NOVO 27/08/2026 (pedido Lucas: "linhas filho tão com os valores
+  // errados/-"): até aqui "detalhes" sempre voltava {} fixo — os totais
+  // das linhas pai vinham certos (via soma() acima), mas a categoria
+  // (linha filho, usada pelo drill-down de renderGrupoResumoDetalhadoCopia)
+  // nunca tinha de onde puxar dado. Preenche lendo conta.categorias
+  // direto da mesma árvore nativa já usada nos totais (arvoresPorEmpresa),
+  // convertendo pro MESMO sinal que a linha pai já usa (negativo pra
+  // despesa/custo, positivo pra receita) — sem isso o valor da categoria
+  // não bateria com o total da linha ao somar as filhas.
+  const categoriasPorCodigos = (codigos, negar) => {
+    const mapa = {};
+    (Array.isArray(codigos) ? codigos : [codigos]).forEach(codigo => {
+      empresas.forEach(emp => {
+        const conta = acharContaCompletaPorCodigo(arvoresPorEmpresa[emp], codigo);
+        if (!conta || !conta.categorias) return;
+        conta.categorias.forEach(cat => {
+          const v = negar ? -cat.total : cat.total;
+          mapa[cat.label] = (mapa[cat.label] || 0) + v;
+        });
+      });
+    });
+    return mapa;
+  };
+  // Receita (1.01.01) precisa da mesma quebra Produtos/Mercadorias/
+  // Serviços já usada nos totais acima (KMNO separa por categoria
+  // "Clientes - Revenda de Mercadoria"; NOVAH inteiro vira Serviços).
+  const detReceitaProdutos = {}, detReceitaMercadorias = {}, detReceitaServicos = {};
+  empresas.forEach(emp => {
+    const conta = acharContaCompletaPorCodigo(arvoresPorEmpresa[emp], '1.01.01');
+    if (!conta || !conta.categorias) return;
+    if (emp === 'NOVAH') {
+      conta.categorias.forEach(cat => { detReceitaServicos[cat.label] = (detReceitaServicos[cat.label] || 0) + cat.total; });
+      return;
+    }
+    conta.categorias.forEach(cat => {
+      const alvo = cat.label === 'Clientes - Revenda de Mercadoria' ? detReceitaMercadorias : detReceitaProdutos;
+      alvo[cat.label] = (alvo[cat.label] || 0) + cat.total;
+    });
+  });
+  const detalhes = {
+    receitaProdutos: detReceitaProdutos,
+    receitaMercadorias: detReceitaMercadorias,
+    receitaServicos: detReceitaServicos,
+    receita: mergeCategoriaMaps(detReceitaProdutos, detReceitaMercadorias, detReceitaServicos),
+    impostos: categoriasPorCodigos('1.01.02', true),
+    devolucoes: categoriasPorCodigos('1.01.03', true),
+    custoInsumos: categoriasPorCodigos('1.21.01', true),
+    custoServicos: categoriasPorCodigos('1.21.02', true),
+    royalties: categoriasPorCodigos('1.21.03', true),
+    custoAdm: categoriasPorCodigos(['2.11.01', '2.11.02'], true),
+    despesasComerciais: categoriasPorCodigos('2.11.04', true),
+    despesasFinanceiras: categoriasPorCodigos('2.11.03', true),
+    receitasFinanceiras: categoriasPorCodigos('1.11.02', false),
+    capex: categoriasPorCodigos(['3.01.01', '3.01.02'], true),
+  };
+
   return {
     receitaProdutos, receitaMercadorias, receitaServicos, receita, impostos, devolucoes, deducoes: impostos + devolucoes, receitaLiquida,
     custoInsumos: cmcAutomatico, custoServicos: custoServicosPrestados, custoMaoObra: 0, cmv, royalties, margemContribuicao,
     custoAdm, despesasComerciais, ebitda, depreciacao, despesasFinanceiras, receitasFinanceiras, lucroLiquido,
     distribuicao, capex, refis, saldoLiquido, recebimentoEmprestimos: 0, pagamentoEmprestimos: 0, saldoCaixa: saldoLiquido,
-    detalhes: {},
+    detalhes,
   };
 }
 
@@ -20214,9 +20299,17 @@ function renderGrupoResumoDetalhadoCopia(monthStart, monthEnd, headerId, bodyId)
         <td class="num total-pct">${(valoresValidos.length && totalReceitaPeriodo) ? (total / totalReceitaPeriodo * 100).toFixed(1).replace('.', ',') + '%' : '—'}</td>
       </tr>`;
 
-    if (!categorias.length) {
+    if (!categorias.length || !empresaUnicaResumo) {
       // Sem detalhe em nenhum mês (linha de subtotal, ex: CMV/Margem/EBITDA,
       // ou período 100% congelado) — fica igual sempre foi, sem clique.
+      // Pedido 27/08/2026: com 0 ou 2+ empresas selecionadas (soma do
+      // Grupo), a linha filho por categoria também fica BLOQUEADA mesmo
+      // quando existe detalhe — só abre com exatamente 1 empresa
+      // selecionada (empresaUnicaResumo). O valor somado da linha pai
+      // continua certo (valoresMeses não depende disso); só o
+      // clique/seta/categorias somem. Mesmo padrão já usado no card
+      // "Tipo/Grupo/Conta do DRE" (ver renderDreNativoTreeCopiaHtml,
+      // flag "resumida").
       return linhaPaiHtml({ colapsavel: false, idAttrs: '', icone: '' });
     }
 
