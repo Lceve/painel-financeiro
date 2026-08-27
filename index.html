@@ -5915,14 +5915,20 @@ function buildArvoreNativaDreConsolidado(categories, movements, meses, nfeRows, 
 }
 
 function buildArvoreNativaDre(empresa, categories, movements, meses, nfeRows, extratoSemTitulo, cmcVendas) {
-  // Exclusão pontual (20/08/2026, confirmado com Lucas): "Transferência
-  // entre contas" (1.04.04, KMNO) é movimento de balanço entre contas da
-  // própria empresa, não receita/despesa real — mas o cadastro dessa
-  // categoria no Omie tem codigo_dre preenchido, então sem essa exclusão
-  // ela entraria indevidamente no DRE nativo. Corrigido no código em vez
-  // de alterar o cadastro no Omie (mesmo padrão já usado pra Adiantamento
-  // de Clientes/Dividendo Sócio em outros blocos deste arquivo).
-  const CATEGORIAS_EXCLUIDAS_DRE_NATIVO = { KMNO: ['1.04.04'] };
+  // REVERTIDO 28/08/2026 (pedido Lucas, confirmado com print real do
+  // nativo): a exclusão de "Transferência entre contas" (1.04.04, KMNO,
+  // aplicada em 20/08/2026) estava ERRADA — o relatório nativo do Omie
+  // ("01. Outras Receitas") CONTA essa transferência normalmente.
+  // Confirmado batendo exato: KMNO Jun/2026, nativo R$39.295,94 = soma
+  // de Transferência entre contas (R$25.456,23) + Juros Recebidos
+  // (R$10.346,48) + Outras Entradas (R$3.490,70) + Rendimentos de
+  // Aplicações (R$2,53), via extrato sem título (dash_current_account_
+  // transactions, origem EXTR, cod_titulo nulo). Sem essa categoria a
+  // soma batia só ~R$13.840, um gap de ~R$25.456 que explicava quase
+  // todo o gap do Total Geral do mês. CATEGORIAS_EXCLUIDAS_DRE_NATIVO
+  // mantida vazia (não removida do código) caso surja outra exclusão
+  // pontual real no futuro — só o item 1.04.04 saiu da lista.
+  const CATEGORIAS_EXCLUIDAS_DRE_NATIVO = {};
   const catByCodigo = {};
   (categories || []).forEach(c => {
     if (c._empresa !== empresa || !c.codigo_dre) return;
