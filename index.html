@@ -12283,6 +12283,20 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   // tudo a vencer) checados e são pessoas físicas reais (folha), não
   // mexidos.
   const FORNECEDOR_PREVISAO_BLUE_LINE_NOVAH = 2135507291;
+  // Exclusão "Industrialização Blue Line" sem Data de Registro real
+  // (27/08/2026, KMNO): confirmado com Julho/2026 — dos 21 títulos dessa
+  // categoria/fornecedor (10357859967), só 1 tem Data de Registro real
+  // (via financial_movements) e bate EXATO com o nativo (R$664,30). Os
+  // outros 20 (R$11.109,30) nunca foram pagos (status A Vencer/Atrasado)
+  // e não têm registro real, mas TÊM número de nota fiscal — então caem
+  // na regra #3 de `resolverDataRegistroComFallback` (nota fiscal →
+  // usa emissão), sendo contados indevidamente. Pra esse fornecedor
+  // específico, "ter nota fiscal" não é sinal confiável de competência
+  // confirmada (diferente de outras contas onde essa regra funciona
+  // bem) — por isso exclusão pontual em vez de mudar a regra geral (que
+  // já está calibrada certo pra Despesas Administrativas KMNO e Custo
+  // de Serviços/Impostos RT, ver `aprendizado-api-data-registro-nao-existe`).
+  const FORNECEDOR_INDUSTRIALIZACAO_BLUE_LINE_KMNO = 10357859967;
   // Exclusão de "Antecipação de Boletos" (25/08/2026, Novah): categorias
   // 1.02.97 (recebimento, mapeada pra Receitas Financeiras) e 2.05.91 +
   // 2.05.92 (pagamento, mapeadas pra Despesas Financeiras). Confirmado
@@ -12355,7 +12369,7 @@ async function carregarDadosDreArvoreTodasEmpresas() {
       omie_id: r.codigo_lancamento_omie,
       _empresa: r._empresa,
     })),
-    ...payable.filter(p => p.status_titulo !== 'CANCELADO' && !DRE_NATIVO_DUPLICADOS_CONHECIDOS_IDS.has(Number(p.codigo_lancamento_omie)) && !(p._empresa === 'NOVAH' && Number(p.codigo_cliente_fornecedor) === FORNECEDOR_PREVISAO_BLUE_LINE_NOVAH)).map(p => ({
+    ...payable.filter(p => p.status_titulo !== 'CANCELADO' && !DRE_NATIVO_DUPLICADOS_CONHECIDOS_IDS.has(Number(p.codigo_lancamento_omie)) && !(p._empresa === 'NOVAH' && Number(p.codigo_cliente_fornecedor) === FORNECEDOR_PREVISAO_BLUE_LINE_NOVAH) && !(p._empresa === 'KMNO' && Number(p.codigo_cliente_fornecedor) === FORNECEDOR_INDUSTRIALIZACAO_BLUE_LINE_KMNO && p.status_titulo !== 'PAGO' && !registroPorTituloFallback.has(`KMNO|${p.codigo_lancamento_omie}`))).map(p => ({
       dt_emissao: p.data_emissao,
       dt_registro: resolverDataRegistroComFallback(p._empresa, p.codigo_lancamento_omie, p.data_emissao, p.status_titulo, p.numero_documento),
       natureza: 'P',
