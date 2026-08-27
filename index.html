@@ -2848,6 +2848,21 @@
         </div>
       </div>
 
+      <!-- Novo card "DRE por CMC" (pedido 26/08/2026) — mesma cascata do
+           "Resumo (Grupo, R$)" (DRE por Caixa), trocando CMV (por
+           categoria financeira) por CMC real de estoque (nCMC × qtd
+           vendida, calculado automaticamente pelo Omie por produto).
+           Só KMNO tem dado sincronizado hoje (cmcVendasPorEmpresaCache) —
+           Novah/RT ficam de fora até o sync ser estendido pra elas.
+           v1: só meses ao vivo (Jun/2026+), sem AV%/drill-down/receita
+           oficial — ver renderResumoCmcKmno. -->
+      <div class="nav-card" onclick="switchView('viewDreCmc')">
+        <div>
+          <div class="nav-card-title">DRE por CMC</div>
+          <div class="nav-card-desc">KMNO — mesma cascata do Resumo (Grupo, R$), com o custo de estoque real (CMC) no lugar do CMV por categoria.</div>
+        </div>
+      </div>
+
     </div>
 
   </div>
@@ -3456,6 +3471,75 @@
        Industriais, Financeiro e Capital de Giro, Estrutura de Capital e
        Endividamento, Estoques e Capital de Giro, Rentabilidade e
        Retorno, Fluxo de Caixa, Eficiência Operacional). ===== -->
+  <!-- ===== VIEW: DRE POR CMC (novo, 26/08/2026) =====
+       Mesma cascata do "Resumo (Grupo, R$)" (DRE por Caixa), trocando
+       CMV por CMC real de estoque. Só KMNO. Ver renderResumoCmcKmno +
+       RESUMO_CMC_KMNO_LINHAS no JS. -->
+  <div id="viewDreCmc" class="view-container">
+    <div class="blocks-inner">
+      <div class="btn-back-container">
+        <button class="btn-back" onclick="switchView('viewMenu')">← Voltar para o Menu</button>
+      </div>
+      <div class="section">
+        <div class="section-head">
+          <h2>DRE por CMC — KMNO</h2>
+        </div>
+
+        <div class="grupo-dfc-cards grupo-dfc-cards-5">
+          <div class="grupo-dfc-card">
+            <div class="grupo-dfc-card-label">Faturamento</div>
+            <div class="grupo-dfc-card-val"><span id="ResumoCmcKmnoReceitaBruta">R$ 0</span></div>
+          </div>
+          <div class="grupo-dfc-card">
+            <div class="grupo-dfc-card-label">CMC</div>
+            <div class="grupo-dfc-card-val"><span id="ResumoCmcKmnoCmc">R$ 0</span></div>
+          </div>
+          <div class="grupo-dfc-card">
+            <div class="grupo-dfc-card-label">Margem de Contribuição</div>
+            <div class="grupo-dfc-card-val"><span id="ResumoCmcKmnoMargem">R$ 0</span></div>
+          </div>
+          <div class="grupo-dfc-card">
+            <div class="grupo-dfc-card-label">EBITDA</div>
+            <div class="grupo-dfc-card-val"><span id="ResumoCmcKmnoEbitda">R$ 0</span></div>
+          </div>
+          <div class="grupo-dfc-card">
+            <div class="grupo-dfc-card-label">Saldo Líquido</div>
+            <div class="grupo-dfc-card-val"><span id="ResumoCmcKmnoSaldoLiquido">R$ 0</span></div>
+          </div>
+        </div>
+        <!-- Sem "Meta"/"Percentual (%)" nos cards acima (diferente do DRE
+             por Caixa) -- não existe meta cadastrada pra CMC ainda. Se
+             quiser, dá pra adicionar depois reaproveitando dashMetasCache. -->
+
+        <div class="chart-card-title" style="margin-top:18px;">Evolução Mensal — KMNO (R$)</div>
+        <div style="position: relative; height: 320px;">
+          <canvas id="chartResumoCmcKmno" role="img" aria-label="Gráfico de evolução mensal da KMNO: Faturamento, CMC, Margem de Contribuição, EBITDA e Saldo Líquido">Evolução mensal.</canvas>
+        </div>
+
+        <div class="bloco-card" style="margin-top:18px;margin-bottom:14px;">
+          <div class="bloco-head">
+            <div class="bloco-titulo">Resumo (KMNO, R$) — CMC real de estoque</div>
+          </div>
+          <div class="bloco-body">
+            <div style="padding:0 16px 8px;font-size:12px;color:var(--bone-dim);">
+              Mesma cascata do "Resumo (Grupo, R$)" (DRE por Caixa), só que a linha de custo é o
+              CMC real (nCMC do produto × quantidade vendida, calculado automaticamente pelo Omie),
+              em vez de CMV por categoria financeira. Só meses ao vivo (Jun/2026 em diante) — sem
+              dado de CMC pra período congelado do Excel. Só KMNO tem sync de CMC hoje.
+            </div>
+            <div id="resumoCmcKmnoStatusOficial" style="padding:0 16px 8px;font-size:11px;font-weight:600;"></div>
+            <div class="dre-tbl-wrap">
+              <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col">
+                <tr id="resumoCmcKmnoHeader"><th>Descrição</th></tr>
+                <tbody id="resumoCmcKmnoBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="viewIndicadores" class="view-container">
     <div class="blocks-inner">
       <div class="btn-back-container">
@@ -3801,6 +3885,7 @@ const VIEW_DISPLAY_NAMES = {
   viewProjections: 'Projeção, Tendência e Metas',
   viewOutrosPendentes: 'Validação de Categorias',
   viewExtras: 'Financiamentos & Inadimplência',
+  viewDreCmc: 'DRE por CMC',
 };
 
 function switchView(viewId, options = {}) {
@@ -3886,6 +3971,15 @@ function switchView(viewId, options = {}) {
 
   if (viewId === 'viewCicloFinanceiro') {
     renderCicloFinanceiro();
+  }
+
+  // DRE por CMC (novo, 26/08/2026): recalcula ao abrir a view, mesmo
+  // padrão do Resumo (Grupo, R$). Só KMNO tem dado real hoje.
+  if (viewId === 'viewDreCmc') {
+    try {
+      const { de: cmcDe, ate: cmcAteInicio } = getSelectedPeriodRange();
+      renderResumoCmcKmno(cmcDe, cmcAteInicio.add(1, 'month'));
+    } catch (e) { console.error('renderResumoCmcKmno (switchView) falhou:', e); }
   }
 
   // DFC por Bloco: recalcula ao abrir a view (garante dado fresco mesmo
@@ -5095,6 +5189,36 @@ let dreArvoreCarregando = false;
 // gaps. Populado no carregamento principal (não depende de o usuário
 // abrir a tela "DRE por Bloco", que tem o próprio cache separado —
 // dreArvoreCmcVendasCache — usado só ali).
+// NOVO (26/08/2026): valor OFICIAL de CMC das Vendas por mês/empresa,
+// puxado do DRE nativo do Omie (dash_cmc_vendas_oficial) -- tem
+// prioridade sobre o cálculo ao vivo (somaCmcVendasPeriodo) quando
+// existir. Motivo: confirmado com suporte Omie que a API MovimentoEstoque
+// só devolve o CMC ATUAL do produto, nunca o CMC vigente na época da
+// venda -- não dá pra recalcular histórico certo via API, então o mês
+// fechado precisa vir do relatório nativo (informado manualmente).
+let cmcVendasOficialCache = {}; // chave "EMPRESA|YYYY-MM" -> valor
+async function carregarCmcVendasOficial() {
+  try {
+    const { data, error } = await supabaseClient
+      .from('dash_cmc_vendas_oficial')
+      .select('empresa_id,ano,mes,valor_oficial');
+    if (error) throw error;
+    cmcVendasOficialCache = {};
+    (data || []).forEach(r => {
+      cmcVendasOficialCache[`${r.empresa_id}|${r.ano}-${String(r.mes).padStart(2, '0')}`] = Number(r.valor_oficial);
+    });
+  } catch (e) {
+    console.error('Erro ao carregar dash_cmc_vendas_oficial:', e);
+  }
+}
+// CMC de um mês: oficial se existir, senão cálculo ao vivo (aproximado
+// -- correto pro mês corrente ainda em andamento, que não tem oficial).
+function cmcMesComOficial(empresa, mesDayjs) {
+  const chave = `${empresa}|${mesDayjs.format('YYYY-MM')}`;
+  if (cmcVendasOficialCache[chave] !== undefined) return cmcVendasOficialCache[chave];
+  return somaCmcVendasPeriodo(empresa, mesDayjs, mesDayjs.add(1, 'month'));
+}
+
 let cmcVendasPorEmpresaCache = null;
 function somaCmcVendasPeriodo(empresa, monthStart, monthEnd) {
   if (!cmcVendasPorEmpresaCache) return 0;
@@ -12704,6 +12828,7 @@ try {
     sbMultiPaged('dash_estoque_cmc_vendas?select=dt_mov,custo,cancelamento'),
   ]);
   cmcVendasPorEmpresaCache = (cmcVendasBruto || []).filter(c => !c.cancelamento);
+  carregarCmcVendasOficial(); // não bloqueia o resto do load -- roda em paralelo, é pequena
   clientsCache = clients;
   contasCorrentesCache = contasCorrentes;
 
@@ -14792,6 +14917,14 @@ function renderForSelectedMonth() {
     const { de: grupoDe, ate: grupoAteInicio } = getSelectedPeriodRange();
     const grupoAte = grupoAteInicio.add(1, 'month'); // getSelectedPeriodRange devolve o INÍCIO do mês final; buildDfc/etc esperam o fim exclusivo
     renderGrupoDfc(grupoDe, grupoAte);
+    // NOVO (26/08/2026): "DRE por CMC" recalculado junto do "DRE por
+    // Caixa" a cada mudança de período — antes só rodava no switchView
+    // (clique no menu), então se o usuário abrisse a tela ANTES do
+    // carregamento inicial terminar (categoriesCache/financialMovementsCache
+    // ainda null), o card ficava permanentemente em branco (nunca
+    // recalculava de novo). Agora fica sincronizado automaticamente,
+    // mesmo padrão de renderGrupoDfc.
+    try { renderResumoCmcKmno(grupoDe, grupoAte); } catch (e) { console.error('renderResumoCmcKmno falhou:', e); }
     // FIX 20/08/2026: mesma correção de ordem do switchView acima —
     // espera a árvore nativa carregar antes de desenhar o Resumo.
     (async () => {
@@ -17227,6 +17360,233 @@ const RESUMO_POR_EMPRESA_LINHAS = [
 // Pago / Dep. Comercial). Empréstimos ficam fora (pedido explícito).
 // NÃO afeta NOVAH/RT nem o card de teste — esses continuam usando
 // RESUMO_POR_EMPRESA_LINHAS (acima), intocado.
+// NOVO (26/08/2026) — card "DRE por CMC": clone de RESUMO_POR_EMPRESA_
+// LINHAS_KMNO (abaixo), removendo 'custoInsumos'/'custoServicos' (que
+// formavam o CMV por categoria) e trocando por 1 linha 'cmc' — custo
+// real de estoque (nCMC × qtd vendida), vindo de somaCmcVendasPeriodo/
+// cmcVendasPorEmpresaCache (mesmo dado já validado na árvore nativa do
+// DRE por Competência, gap de R$66 em R$47mil, Jun/2026). Só KMNO.
+const RESUMO_CMC_KMNO_LINHAS = [
+  { chave: 'receita', label: '(+) Recebimento' },
+  { chave: 'impostos', label: '(-) Impostos' },
+  { chave: 'outrosTributos', label: '(-) Outros Tributos' },
+  { chave: 'devolucoes', label: '(-) Devoluções' },
+  { chave: 'cmc', label: '(-) Custo Médio (CMC) das Vendas' },
+  { chave: 'royalties', label: '(-) Royalties' },
+  { chave: 'despesasAdministracao', label: '(-) Despesas Administração' },
+  { chave: 'depPessoalAdm', label: '(-) Dep. Pessoal ADM' },
+  { chave: 'proLabore', label: '(-) Pró-Labore' },
+  { chave: 'despesasComerciaisPuro', label: '(-) Despesas Comerciais' },
+  { chave: 'fretePago', label: '(-) Frete Pago' },
+  { chave: 'depComercial', label: '(-) Dep. Comercial' },
+  { chave: 'despesasDiretoria', label: '(-) Despesas Diretoria' },
+  { chave: 'despesasFinanceiras', label: '(-) Despesas Financeiras' },
+  { chave: 'receitasFinanceiras', label: '(+) Receitas Financeiras' },
+  { chave: 'distribuicao', label: '(-) Distribuição de Lucros' },
+  { chave: 'capex', label: '(-) Capex' },
+  { chave: 'refis', label: '(-) Outros (Refis)' },
+];
+
+// Renderiza o card "DRE por CMC" (viewDreCmc) — v1 simplificada:
+// só meses ao vivo (>= EXCEL_CONGELADO_ATE, não tem CMC pra período
+// congelado do Excel), sem AV%, sem drill-down por categoria, sem
+// override de "Receita Oficial" (dash_orcamento_realizado) — usa direto
+// a soma de buildResumoCategoriasMes, igual RESUMO_POR_EMPRESA_LINHAS_
+// KMNO faz pros meses ao vivo. Se precisar de paridade 100% com o
+// Resumo (Grupo, R$) (AV%, drill-down, receita oficial), dá pra trazer
+// depois reaproveitando o mesmo padrão de renderGrupoResumoPorEmpresa.
+function renderResumoCmcKmno(monthStart, monthEnd) {
+  const header = document.getElementById('resumoCmcKmnoHeader');
+  const body = document.getElementById('resumoCmcKmnoBody');
+  if (!header || !body) return;
+  if (!categoriesCache || !financialMovementsCache) return; // dados ao vivo ainda carregando
+
+  const meses = [];
+  let cursor = monthStart.startOf('month');
+  if (cursor.isBefore(EXCEL_CONGELADO_ATE)) cursor = EXCEL_CONGELADO_ATE.startOf('month');
+  const fimExclusivo = monthEnd.startOf('month');
+  let guard = 0;
+  while (cursor.isBefore(fimExclusivo) && guard < 24) { meses.push(cursor); cursor = cursor.add(1, 'month'); guard++; }
+
+  const statusEl = document.getElementById('resumoCmcKmnoStatusOficial');
+  if (statusEl) {
+    const oficiais = meses.filter(m => cmcVendasOficialCache[`KMNO|${m.format('YYYY-MM')}`] !== undefined).map(m => DRE_ARVORE_NOMES_MES[m.month()]);
+    const aoVivo = meses.filter(m => cmcVendasOficialCache[`KMNO|${m.format('YYYY-MM')}`] === undefined).map(m => DRE_ARVORE_NOMES_MES[m.month()]);
+    statusEl.innerHTML = (oficiais.length ? `<span style="color:var(--green);">✓ CMC oficial (bate com DRE nativo): ${oficiais.join(', ')}</span>` : '')
+      + (oficiais.length && aoVivo.length ? ' &nbsp;|&nbsp; ' : '')
+      + (aoVivo.length ? `<span style="color:#b8860b;">≈ CMC estimado (mês em andamento, ao vivo): ${aoVivo.join(', ')}</span>` : '');
+  }
+
+  if (!meses.length) {
+    header.innerHTML = '<th>Descrição</th>';
+    body.innerHTML = '<tr><td style="color:var(--bone-dim);">Sem dado de CMC pro período selecionado (só meses a partir de Jun/2026 têm CMC sincronizado).</td></tr>';
+    ['ResumoCmcKmnoReceitaBruta', 'ResumoCmcKmnoCmc', 'ResumoCmcKmnoMargem', 'ResumoCmcKmnoEbitda', 'ResumoCmcKmnoSaldoLiquido'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.textContent = 'R$-----';
+    });
+    if (chartResumoCmcKmno) { chartResumoCmcKmno.destroy(); chartResumoCmcKmno = null; }
+    return;
+  }
+
+  // Detalhe ao vivo por mês (mesma fonte da linha "Recebimento" e de
+  // todos os outros buckets), reaproveitado pro total E pro drill-down.
+  const liveByMes = {};
+  meses.forEach(m => {
+    liveByMes[m.format('YYYY-MM')] = buildResumoCategoriasMes('KMNO', categoriesCache, financialMovementsCache, m, m.add(1, 'month'), 'caixa', contasCorrentesCache);
+  });
+
+  // Receita do mês — usada como base do AV% (mesma convenção do Resumo
+  // por Empresa: valor de cada linha ÷ Recebimento do mês/período).
+  const receitaPorMes = meses.map(m => Object.values(liveByMes[m.format('YYYY-MM')]['receita'] || {}).reduce((s, v) => s + v, 0));
+  const totalReceitaPeriodo = receitaPorMes.reduce((a, b) => a + b, 0);
+
+  const fmtPctOrDash = v => v === null ? '—' : v.toFixed(1).replace('.', ',') + '%';
+  const valTd = v => {
+    const negativo = v < 0;
+    return `<td class="num">${negativo ? `(${fmtBRL(Math.abs(v))})` : fmtBRL(v)}</td>`;
+  };
+  const linhaColunas = (valoresPorMes, total, media) => meses.map((_, i) => {
+    const av = receitaPorMes[i] ? (valoresPorMes[i] / receitaPorMes[i] * 100) : null;
+    return `${valTd(valoresPorMes[i])}<td class="num total-pct">${fmtPctOrDash(av)}</td>`;
+  }).join('') + `${valTd(total)}${valTd(media)}<td class="num total-pct">${fmtPctOrDash(totalReceitaPeriodo ? (total / totalReceitaPeriodo * 100) : null)}</td>`;
+
+  header.innerHTML = '<th class="dre-tbl-sticky">Descrição</th>' + meses.map(m => `<th>${DRE_ARVORE_NOMES_MES[m.month()]}</th><th class="total-pct">AV%</th>`).join('') + '<th>Total</th><th>Média</th><th class="total-pct">AV%</th>';
+
+  let seq = 0;
+  const valoresMesesPorChave = {};
+  const htmlPorChave = {};
+
+  // Linha com drill-down por categoria (todas as chaves de RESUMO_CMC_
+  // KMNO_LINHAS, exceto 'cmc' — que não vem de categoria financeira,
+  // vem do estoque real, sem quebra por categoria pra abrir).
+  const linhaComCategoria = (chave, label) => {
+    const valoresPorMes = meses.map(m => Object.values(liveByMes[m.format('YYYY-MM')][chave] || {}).reduce((s, v) => s + v, 0));
+    const total = valoresPorMes.reduce((a, b) => a + b, 0);
+    const media = total / valoresPorMes.length;
+    valoresMesesPorChave[chave] = valoresPorMes;
+
+    const categoriasSet = new Set();
+    meses.forEach(m => Object.keys(liveByMes[m.format('YYYY-MM')][chave] || {}).forEach(c => categoriasSet.add(c)));
+    CATEGORIAS_OCULTAS_RESUMO_EMPRESA.forEach(c => categoriasSet.delete(c));
+    const temCategorias = categoriasSet.size > 0;
+    seq++;
+    const rowId = `resumo-cmc-${seq}`;
+    const ehReceita = chave === 'receita';
+
+    const linhaPai = `
+      <tr class="dre-tbl-row${temCategorias ? ' colapsavel' : ''}${ehReceita ? ' dre-tbl-row-amarelo' : ''}"${temCategorias ? ` id="pai-${rowId}" onclick="toggleResumoEmpresaConta('${rowId}')" title="Clique para ver as categorias"` : ''}${ehReceita ? ' style="font-weight:600;"' : ''}>
+        <td class="dre-tbl-sticky">${temCategorias ? `<span class="dre-tbl-toggle-icon" id="icon-${rowId}">+</span>` : ''}${semPrefixoDre(label)}</td>
+        ${linhaColunas(valoresPorMes, total, media)}
+      </tr>`;
+    if (!temCategorias) { htmlPorChave[chave] = linhaPai; return; }
+
+    const linhasCategorias = [...categoriasSet].sort().map(catLabel => {
+      const valoresCat = meses.map(m => Number((liveByMes[m.format('YYYY-MM')][chave] || {})[catLabel] || 0));
+      const totalCat = valoresCat.reduce((a, b) => a + b, 0);
+      const mediaCat = totalCat / valoresCat.length;
+      return `
+        <tr class="dre-tbl-row" style="display:none;color:#5a7268;font-size:12px;" data-grupo-conta="${rowId}">
+          <td class="dre-tbl-sticky">${catLabel}</td>
+          ${linhaColunas(valoresCat, totalCat, mediaCat)}
+        </tr>`;
+    }).join('');
+    htmlPorChave[chave] = linhasCategorias + linhaPai;
+  };
+
+  // Linha de subtotal calculada (sem drill-down, fundo amarelo) — CMC
+  // usa isso também (não tem categoria pra abrir).
+  const linhaSubtotal = (label, valoresPorMes) => {
+    const total = valoresPorMes.reduce((a, b) => a + b, 0);
+    const media = total / valoresPorMes.length;
+    return `
+      <tr class="dre-tbl-row-amarelo" style="font-weight:600;">
+        <td class="dre-tbl-sticky">${label}</td>
+        ${linhaColunas(valoresPorMes, total, media)}
+      </tr>`;
+  };
+
+  RESUMO_CMC_KMNO_LINHAS.forEach(l => {
+    if (l.chave === 'cmc') {
+      const cmcPorMes = meses.map(m => -cmcMesComOficial('KMNO', m));
+      valoresMesesPorChave.cmc = cmcPorMes;
+      htmlPorChave.cmc = linhaSubtotal(l.label, cmcPorMes);
+    } else {
+      linhaComCategoria(l.chave, l.label);
+    }
+  });
+
+  const somaChaves = (...chaves) => meses.map((_, i) => chaves.reduce((acc, ch) => acc + (valoresMesesPorChave[ch] ? valoresMesesPorChave[ch][i] : 0), 0));
+
+  const receitaLiquidaPorMes = somaChaves('receita', 'impostos', 'outrosTributos', 'devolucoes');
+  const margemPorMes = meses.map((_, i) => receitaLiquidaPorMes[i] + valoresMesesPorChave.cmc[i] + valoresMesesPorChave.royalties[i]);
+  const custoAdmPorMes = somaChaves('despesasAdministracao', 'depPessoalAdm', 'proLabore', 'despesasDiretoria');
+  const despesasComerciaisPorMes = somaChaves('despesasComerciaisPuro', 'fretePago', 'depComercial');
+  const ebitdaPorMes = meses.map((_, i) => margemPorMes[i] + custoAdmPorMes[i] + despesasComerciaisPorMes[i]);
+  const lucroLiquidoPorMes = somaChaves('despesasFinanceiras', 'receitasFinanceiras').map((v, i) => ebitdaPorMes[i] + v);
+  const saldoLiquidoPorMes = somaChaves('distribuicao', 'capex', 'refis').map((v, i) => lucroLiquidoPorMes[i] + v);
+
+  const linhas = [];
+  RESUMO_CMC_KMNO_LINHAS.forEach(l => {
+    linhas.push(htmlPorChave[l.chave]);
+    if (l.chave === 'devolucoes') linhas.push(linhaSubtotal('(=) Receita Líquida', receitaLiquidaPorMes));
+    if (l.chave === 'cmc') linhas.push(linhaSubtotal('(=) Margem de Contribuição', margemPorMes));
+    if (l.chave === 'depComercial') linhas.push(linhaSubtotal('(=) Resultado Operacional (EBITDA)', ebitdaPorMes));
+    if (l.chave === 'receitasFinanceiras') linhas.push(linhaSubtotal('(=) Resultado Líquido (Lucro Líquido)', lucroLiquidoPorMes));
+    if (l.chave === 'refis') linhas.push(linhaSubtotal('(=) Saldo Líquido', saldoLiquidoPorMes));
+  });
+  body.innerHTML = linhas.join('');
+
+  // ---- KPI cards do topo ----
+  const totalReceitaBruta = receitaPorMes.reduce((a, b) => a + b, 0);
+  const totalCmc = valoresMesesPorChave.cmc.reduce((a, b) => a + b, 0);
+  const totalMargem = margemPorMes.reduce((a, b) => a + b, 0);
+  const totalEbitda = ebitdaPorMes.reduce((a, b) => a + b, 0);
+  const totalSaldoLiquido = saldoLiquidoPorMes.reduce((a, b) => a + b, 0);
+  const setKpi = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = fmtBRL(v); };
+  setKpi('ResumoCmcKmnoReceitaBruta', totalReceitaBruta);
+  setKpi('ResumoCmcKmnoCmc', totalCmc);
+  setKpi('ResumoCmcKmnoMargem', totalMargem);
+  setKpi('ResumoCmcKmnoEbitda', totalEbitda);
+  setKpi('ResumoCmcKmnoSaldoLiquido', totalSaldoLiquido);
+
+  // ---- Gráfico de Evolução Mensal ----
+  const evolucaoMensal = meses.map((m, i) => ({
+    mes: m, receitaBruta: receitaPorMes[i], cmc: valoresMesesPorChave.cmc[i],
+    margemContribuicao: margemPorMes[i], ebitda: ebitdaPorMes[i], saldoLiquido: saldoLiquidoPorMes[i],
+  }));
+  renderResumoCmcKmnoChart(evolucaoMensal);
+}
+
+let chartResumoCmcKmno = null;
+function renderResumoCmcKmnoChart(evolucaoMensal) {
+  const canvas = document.getElementById('chartResumoCmcKmno');
+  if (!canvas) return;
+  const labels = evolucaoMensal.map(e => DRE_ARVORE_NOMES_MES[e.mes.month()]);
+  const dataset = (label, chave, cor) => ({
+    label, data: evolucaoMensal.map(e => e[chave]), borderColor: cor, backgroundColor: cor, tension: 0.3, fill: false,
+  });
+  const datasets = [
+    dataset('Faturamento', 'receitaBruta', CHART_COLORS.blue),
+    dataset('CMC', 'cmc', '#9CCBBB'),
+    dataset('Margem de Contribuição', 'margemContribuicao', CHART_COLORS.green),
+    dataset('EBITDA', 'ebitda', '#01291E'),
+    dataset('Saldo Líquido', 'saldoLiquido', '#4fae86'),
+  ];
+  if (chartResumoCmcKmno) chartResumoCmcKmno.destroy();
+  chartResumoCmcKmno = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { color: 'rgba(2,64,49,0.75)' } } },
+      scales: {
+        x: { ticks: { color: 'rgba(2,64,49,0.55)' }, grid: { color: 'rgba(2,64,49,0.06)' } },
+        y: { ticks: { color: 'rgba(2,64,49,0.55)' }, grid: { color: 'rgba(2,64,49,0.06)' } },
+      },
+    },
+  });
+}
+
 const RESUMO_POR_EMPRESA_LINHAS_KMNO = [
   { chave: 'receita', label: '(+) Recebimento' },
   { chave: 'impostos', label: '(-) Impostos' },
