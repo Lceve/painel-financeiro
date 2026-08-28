@@ -10044,10 +10044,6 @@ function buildTodosBlocosRealizado(empresa, categories, movements, monthStart, m
     // ganham bloco PRÓPRIO abaixo, senão contariam 2x.
     B.despesas_financeiras = buildBlocoArvorePorPrefixo('despesas_financeiras', 'Despesas Financeiras', 'P', '2.05.', empresa, categories, totalPorCodigo, ['2.05.03']);
     B.receitas_financeiras = buildBlocoArvorePorPrefixo('receitas_financeiras', 'Receitas Financeiras', 'R', '1.02.', empresa, categories, totalPorCodigo, ['1.02.98', '1.02.99', '1.02.97'], ['Transferências entre contas', 'Transferencias entre contas']);
-    // AJUSTADO 28/08/2026 (pedido Lucas): "1.04.01" (Adiantamento de
-    // Clientes) adicionado aqui — saiu de B.receita_bruta acima, entra
-    // no mesmo bloco "Recebimento Empréstimos/Adiantamentos" que já
-    // existia pra Recebimentos Empréstimos/Kiko.
     B.emprestimos_recebidos = buildBlocoArvorePorPrefixo('emprestimos_recebidos', 'Recebimento Empréstimos', 'R', ['1.02.98', '1.02.99', '1.04.01'], empresa, categories, totalPorCodigo);
     B.emprestimos_pagos    = buildBlocoArvorePorPrefixo('emprestimos_pagos', 'Pagamento de Empréstimos', 'P', ['2.05.03'], empresa, categories, totalPorCodigo);
   }
@@ -13186,7 +13182,19 @@ try {
 
     categoriesCache = categories;
     movementsCache = excluirGatewayReconciliacaoKmno(excluirIcmsResiduoKmno(unifiedMovements)); // para DRE/competência (dt_emissao) — vem de receivable+payable
-    financialMovementsCache = dedupFinancialMovements(excluirGatewayReconciliacaoKmno(excluirIcmsResiduoKmno(movements || []))); // para DFC/caixa (dt_pagamento real) — vem de omie_financial_movements, deduplicado (título × baixa real)
+    // AJUSTADO 28/08/2026 (pedido Lucas): "excluirGatewayReconciliacaoKmno"
+    // REMOVIDO daqui — essa categoria (1.04.96, "Importação de Receitas
+    // Gatways") tem NO PRÓPRIO NOME "Não entra DRE", ou seja, a exclusão
+    // vale só pra Competência (linha acima). No CAIXA/DFC, o Omie nativo
+    // MOSTRA esse valor normalmente dentro de "Receitas Realizadas" —
+    // conta como dinheiro real que entrou, mesmo que depois seja
+    // reconciliado/repassado. Excluir aqui também fazia Recebimento e
+    // Despesa perderem o MESMO valor nos dois lados (a saída simétrica
+    // do gateway também some) — o Saldo final batia por coincidência
+    // (dois erros simétricos se cancelando), mas o Recebimento sozinho
+    // ficava ~R$253k menor que o oficial do Omie (confirmado: R$596k
+    // nosso vs R$849k Omie, Jun/2026 KMNO).
+    financialMovementsCache = dedupFinancialMovements(excluirIcmsResiduoKmno(movements || [])); // para DFC/caixa (dt_pagamento real) — vem de omie_financial_movements, deduplicado (título × baixa real)
     transferenciasCache = (movements || []).filter(m => ORIGENS_TRANSFERENCIA.has(m.origem)); // TRAR/TRAP — vão à parte no DFC ("Transferências e Ajustes de Saldo"), fora de Receitas/Despesas
     receivableCache = receivable;
     payableCache = payable;
@@ -15652,9 +15660,13 @@ async function carregarDadosAnaliseBancosTodasEmpresas() {
       Promise.all(empresas.map(k => sbPaged('dash_accounts_receivable?select=data_emissao,data_registro,data_vencimento,data_pagamento,data_previsao,valor_documento,valor_recebido,status_titulo,codigo_categoria,observacao,numero_documento,codigo_cliente_fornecedor', k).catch(() => []))),
     ]);
     analiseBancosContasCache = contas.flatMap((rows, i) => (rows || []).map(r => ({ ...r, _empresa: empresas[i] })));
-    analiseBancosMovimentosCache = dedupFinancialMovements(excluirGatewayReconciliacaoKmno(excluirIcmsResiduoKmno(
+    // AJUSTADO 28/08/2026 (pedido Lucas): mesmo motivo da linha em
+    // carregarDadosTodasEmpresas — "Análise de Bancos" é visão de Caixa
+    // (saldo real de conta), então o gateway (1.04.96) deve contar aqui
+    // também, não só ser excluído (que é regra só de Competência).
+    analiseBancosMovimentosCache = dedupFinancialMovements(excluirIcmsResiduoKmno(
       movs.flatMap((rows, i) => (rows || []).map(r => ({ ...r, _empresa: empresas[i] })))
-    )));
+    ));
     analiseBancosReceivableCache = receb.flatMap((rows, i) => (rows || []).filter(r => r.status_titulo !== 'CANCELADO').map(r => ({ ...r, _empresa: empresas[i] })));
   } catch (err) {
     console.error('carregarDadosAnaliseBancosTodasEmpresas falhou:', err);
