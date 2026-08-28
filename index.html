@@ -5915,20 +5915,14 @@ function buildArvoreNativaDreConsolidado(categories, movements, meses, nfeRows, 
 }
 
 function buildArvoreNativaDre(empresa, categories, movements, meses, nfeRows, extratoSemTitulo, cmcVendas) {
-  // REVERTIDO 28/08/2026 (pedido Lucas, confirmado com print real do
-  // nativo): a exclusão de "Transferência entre contas" (1.04.04, KMNO,
-  // aplicada em 20/08/2026) estava ERRADA — o relatório nativo do Omie
-  // ("01. Outras Receitas") CONTA essa transferência normalmente.
-  // Confirmado batendo exato: KMNO Jun/2026, nativo R$39.295,94 = soma
-  // de Transferência entre contas (R$25.456,23) + Juros Recebidos
-  // (R$10.346,48) + Outras Entradas (R$3.490,70) + Rendimentos de
-  // Aplicações (R$2,53), via extrato sem título (dash_current_account_
-  // transactions, origem EXTR, cod_titulo nulo). Sem essa categoria a
-  // soma batia só ~R$13.840, um gap de ~R$25.456 que explicava quase
-  // todo o gap do Total Geral do mês. CATEGORIAS_EXCLUIDAS_DRE_NATIVO
-  // mantida vazia (não removida do código) caso surja outra exclusão
-  // pontual real no futuro — só o item 1.04.04 saiu da lista.
-  const CATEGORIAS_EXCLUIDAS_DRE_NATIVO = {};
+  // Exclusão pontual (20/08/2026, confirmado com Lucas): "Transferência
+  // entre contas" (1.04.04, KMNO) é movimento de balanço entre contas da
+  // própria empresa, não receita/despesa real — mas o cadastro dessa
+  // categoria no Omie tem codigo_dre preenchido, então sem essa exclusão
+  // ela entraria indevidamente no DRE nativo. Corrigido no código em vez
+  // de alterar o cadastro no Omie (mesmo padrão já usado pra Adiantamento
+  // de Clientes/Dividendo Sócio em outros blocos deste arquivo).
+  const CATEGORIAS_EXCLUIDAS_DRE_NATIVO = { KMNO: ['1.04.04'] };
   const catByCodigo = {};
   (categories || []).forEach(c => {
     if (c._empresa !== empresa || !c.codigo_dre) return;
@@ -12283,20 +12277,6 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   // tudo a vencer) checados e são pessoas físicas reais (folha), não
   // mexidos.
   const FORNECEDOR_PREVISAO_BLUE_LINE_NOVAH = 2135507291;
-  // Exclusão "Industrialização Blue Line" sem Data de Registro real
-  // (27/08/2026, KMNO): confirmado com Julho/2026 — dos 21 títulos dessa
-  // categoria/fornecedor (10357859967), só 1 tem Data de Registro real
-  // (via financial_movements) e bate EXATO com o nativo (R$664,30). Os
-  // outros 20 (R$11.109,30) nunca foram pagos (status A Vencer/Atrasado)
-  // e não têm registro real, mas TÊM número de nota fiscal — então caem
-  // na regra #3 de `resolverDataRegistroComFallback` (nota fiscal →
-  // usa emissão), sendo contados indevidamente. Pra esse fornecedor
-  // específico, "ter nota fiscal" não é sinal confiável de competência
-  // confirmada (diferente de outras contas onde essa regra funciona
-  // bem) — por isso exclusão pontual em vez de mudar a regra geral (que
-  // já está calibrada certo pra Despesas Administrativas KMNO e Custo
-  // de Serviços/Impostos RT, ver `aprendizado-api-data-registro-nao-existe`).
-  const FORNECEDOR_INDUSTRIALIZACAO_BLUE_LINE_KMNO = 10357859967;
   // Exclusão de "Antecipação de Boletos" (25/08/2026, Novah): categorias
   // 1.02.97 (recebimento, mapeada pra Receitas Financeiras) e 2.05.91 +
   // 2.05.92 (pagamento, mapeadas pra Despesas Financeiras). Confirmado
@@ -12333,27 +12313,28 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   (fmRegistroFallback || []).forEach(f => {
     registroPorTituloFallback.set(`${f._empresa}|${f.cod_titulo}`, f.dt_registro);
   });
-  // EXCEÇÃO (27/08/2026, achado testando Julho/KMNO via SQL): categoria
-  // "Industrialização Blue Line" (2.01.01) é 100% concentrada num único
-  // fornecedor intercompany (Blue Line Confecções, 10357859967, 430
-  // títulos históricos). O relatório NATIVO do Omie só conta essa
-  // categoria na competência do mês quando o título tem registro real
-  // (baixa/pagamento efetivo) — não basta ter nota fiscal anexada, ao
-  // contrário da regra 3 padrão abaixo. Confirmado via SQL: 21 títulos
-  // de Julho com nota fiscal mas nenhum PAGO nem com registro real em
-  // financial_movements — nativo mostrava só R$664,30 (1 título com
-  // registro), nosso código somava R$11.773,60 (todos os 21, por ter
-  // numero_documento). Provavelmente reflete que é lançamento
-  // intercompany, sujeito a renegociação/compensação antes do
-  // pagamento, então só "conta" pra competência quando vira dinheiro
-  // de verdade. Categorias fora de 2.01.01 continuam com a regra 3
-  // normal (nota fiscal já garante competência).
-  const CATEGORIA_INDUSTRIALIZACAO_BLUE_LINE_KMNO = '2.01.01';
-  const resolverDataRegistroComFallback = (empresa, codTitulo, dataEmissao, statusTitulo, numeroDocumento, codigoCategoria) => {
+  // FIX 28/08/2026 (confirmado com suporte Omie + validado via SQL): a
+  // regra de competência do Omie usa Data de Registro do PRÓPRIO título
+  // (campo accounts_payable.data_registro) como critério principal, antes
+  // de cair em emissão — e esse campo já vem sincronizado, só nunca tinha
+  // sido usado aqui. Achado ao investigar o resíduo de Tecido Sarja
+  // (Julho/KMNO): 2 títulos (000014244/1 e /2) têm data_registro em
+  // Agosto mas emissão em Julho — o dashboard contava em Julho (errado),
+  // o relatório nativo do Omie (gerado com Tipo=Data de Registro, nosso
+  // padrão de referência) conta em Agosto (certo). Levantamento completo
+  // via SQL: 586 títulos de 9.437 (6,2%, R$852.838,71) têm data_registro
+  // divergente da emissão, espalhados por 15+ categorias incluindo Tecido
+  // Ripstop (R$43.896,01) — mesma causa provável do padrão Ripstop↔
+  // Trançado, ainda não confirmado. Testado sem impacto em Despesas
+  // Administrativas (zero títulos com data_registro preenchida nessa
+  // categoria, então cai no mesmo fallback de sempre). Novo 2º nível de
+  // prioridade: registro real (financial_movements) > data_registro do
+  // título > emissão (se PAGO ou com nota fiscal) > exclui.
+  const resolverDataRegistroComFallback = (empresa, codTitulo, dataEmissao, statusTitulo, numeroDocumento, dataRegistroTitulo) => {
     const registroReal = registroPorTituloFallback.get(`${empresa}|${codTitulo}`);
     if (registroReal) return registroReal;
+    if (dataRegistroTitulo) return dataRegistroTitulo;
     if (statusTitulo === 'PAGO') return dataEmissao;
-    if (codigoCategoria === CATEGORIA_INDUSTRIALIZACAO_BLUE_LINE_KMNO) return null;
     if (numeroDocumento) return dataEmissao;
     return null;
   };
@@ -12386,16 +12367,43 @@ async function carregarDadosDreArvoreTodasEmpresas() {
       omie_id: r.codigo_lancamento_omie,
       _empresa: r._empresa,
     })),
-    ...payable.filter(p => p.status_titulo !== 'CANCELADO' && !DRE_NATIVO_DUPLICADOS_CONHECIDOS_IDS.has(Number(p.codigo_lancamento_omie)) && !(p._empresa === 'NOVAH' && Number(p.codigo_cliente_fornecedor) === FORNECEDOR_PREVISAO_BLUE_LINE_NOVAH) && !(p._empresa === 'KMNO' && Number(p.codigo_cliente_fornecedor) === FORNECEDOR_INDUSTRIALIZACAO_BLUE_LINE_KMNO && p.status_titulo !== 'PAGO' && !registroPorTituloFallback.has(`KMNO|${p.codigo_lancamento_omie}`))).map(p => ({
-      dt_emissao: p.data_emissao,
-      dt_registro: resolverDataRegistroComFallback(p._empresa, p.codigo_lancamento_omie, p.data_emissao, p.status_titulo, p.numero_documento, p.codigo_categoria),
-      natureza: 'P',
-      val_pago: Number(p.valor_documento || 0),
-      val_liquido: Number(p.valor_documento || 0),
-      cod_categoria: resolverCategoriaComFallback(p._empresa, p.codigo_lancamento_omie, p.codigo_categoria, p.numero_documento_fiscal),
-      omie_id: p.codigo_lancamento_omie,
-      _empresa: p._empresa,
-    })),
+    ...payable.filter(p => p.status_titulo !== 'CANCELADO' && !DRE_NATIVO_DUPLICADOS_CONHECIDOS_IDS.has(Number(p.codigo_lancamento_omie)) && !(p._empresa === 'NOVAH' && Number(p.codigo_cliente_fornecedor) === FORNECEDOR_PREVISAO_BLUE_LINE_NOVAH)).flatMap(p => {
+      const baseNativo = {
+        dt_emissao: p.data_emissao,
+        dt_registro: resolverDataRegistroComFallback(p._empresa, p.codigo_lancamento_omie, p.data_emissao, p.status_titulo, p.numero_documento, p.data_registro),
+        natureza: 'P',
+        omie_id: p.codigo_lancamento_omie,
+        _empresa: p._empresa,
+      };
+      // FIX 28/08/2026 (achado investigando resíduo de Tecido Sarja/Trançado
+      // Julho KMNO): mesmo tratamento de rateio que unifiedMovements
+      // (GRUPO 1) já fazia desde 05/08/2026, mas faltava aqui na árvore
+      // NATIVA. Sem isso, título com rateio real (codigo_categoria=null,
+      // 2+ categorias em dash_accounts_payable_categorias) caía no
+      // fallback de NFe (categoriaPorNumeroNf), que só devolve 1 categoria
+      // e jogava o valor INTEIRO nela — confirmado no título 10584565139
+      // (Gripa Textil, NFe 000001934): valor completo R$2.063,86 ia pra
+      // Tecido Sarja, quando o rateio real é 40,69% Sarja (R$839,86) +
+      // 59,31% Trançado (R$1.224,00). Isso explicava os dois resíduos ao
+      // mesmo tempo (Sarja sobrando, Trançado faltando o mesmo valor).
+      if (!p.codigo_categoria) {
+        const rateio = rateioPayableCache[`${p._empresa}|${p.codigo_lancamento_omie}`];
+        if (rateio && rateio.length) {
+          return rateio.map(rc => ({
+            ...baseNativo,
+            val_pago: Number(rc.valor || 0),
+            val_liquido: Number(rc.valor || 0),
+            cod_categoria: rc.cod_categoria,
+          }));
+        }
+      }
+      return [{
+        ...baseNativo,
+        val_pago: Number(p.valor_documento || 0),
+        val_liquido: Number(p.valor_documento || 0),
+        cod_categoria: resolverCategoriaComFallback(p._empresa, p.codigo_lancamento_omie, p.codigo_categoria, p.numero_documento_fiscal),
+      }];
+    }),
   ].filter(m => m.dt_registro && !(m._empresa === 'NOVAH' && CATEGORIAS_ANTECIPACAO_BOLETO_NOVAH.has(m.cod_categoria)));
   dreArvoreMovementsCacheNativo = unifiedMovementsNativo;
 }
