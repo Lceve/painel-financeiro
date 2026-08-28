@@ -9649,14 +9649,41 @@ function buildTotalPorCategoriaEmpresa(categories, movements, empresa, monthStar
   // modo 'caixa' fecha a Despesa de Junho em 99,9998% de precisão
   // (R$419.053,45 vs R$419.054,28 real). Só afeta modo='caixa' — DRE por
   // Competência/Bloco continuam sem mudança.
+  // FIX 28/08/2026 (pedido Lucas, confirmado com financeiro): a exclusão
+  // acima só vale pro lado de DESPESA (validada com dado real). Pro lado
+  // de RECEBIMENTO, financeiro confirmou o contrário: "o DRE por Caixa
+  // considera a data de crédito/previsão do lançamento financeiro" — o
+  // pagamento via gateway (Mercado Pago, PagALeve, RedeCard, Omie.CASH)
+  // já conta como recebido no Caixa assim que é registrado no
+  // extrato/gateway, sem esperar o repasse pro banco real (que pode levar
+  // até ~30 dias, ex: cartão). Antes disso a exclusão de contas virtuais
+  // também zerava Recebimento de gateway, deixando "Adiantamento de
+  // Clientes" artificialmente baixo. Agora só exclui em natureza='P'.
   const contasVirtuais = new Set(
     modo === 'caixa'
       ? (contasCache || []).filter(c => c._empresa === empresa && c.fluxo_caixa === false).map(c => c.n_cod_cc)
       : []
   );
+  // FIX 28/08/2026 (pedido Lucas): categoria "1.04.01" (Adiantamento de
+  // Clientes) da KMNO passou a ter volume real alto (R$1,3-1,4mi/mês) —
+  // maioria é adiantamento de cliente de verdade (ex: academias/clubes
+  // pagando pedido grande antes do faturamento), mas inclui também o
+  // cliente placeholder "KMNO PREVISAO" (10550353479, R$420.000 em
+  // Jun+Jul, 28 títulos de R$15.000 — já catalogado em
+  // PREVISAO_CODIGOS_CLIENTE_POR_EMPRESA, mas nunca excluído do Caixa
+  // porque a fonte usada aqui, financial_movements, não carrega o
+  // código do cliente). Mapa cod_titulo -> cliente via receivableCache
+  // (que tem codigo_cliente_fornecedor), só pra essa checagem pontual.
+  const clientePorTituloReceivable = new Map();
+  if (modo === 'caixa' && receivableCache) {
+    receivableCache.forEach(r => {
+      if (r._empresa === empresa) clientePorTituloReceivable.set(r.codigo_lancamento_omie, r.codigo_cliente_fornecedor);
+    });
+  }
   (movements || []).forEach(m => {
     if (m._empresa !== empresa) return;
-    if (modo === 'caixa' && contasVirtuais.has(m.cod_cc)) return;
+    if (modo === 'caixa' && m.natureza === 'P' && contasVirtuais.has(m.cod_cc)) return;
+    if (modo === 'caixa' && m.cod_categoria === '1.04.01' && isClientePrevisao(empresa, clientePorTituloReceivable.get(m.cod_titulo))) return;
     // FIX 04/08: "DRE por Caixa" (renderGrupoResumoPorEmpresa) chama essa
     // função pedindo modo='caixa' — usa dt_pagamento (regra confirmada:
     // DFC=data do pagamento, DRE=data do registro). Antes usava sempre
@@ -9664,7 +9691,18 @@ function buildTotalPorCategoriaEmpresa(categories, movements, empresa, monthStar
     // "Caixa" eram na real competência com rótulo errado. Todo o resto
     // (DRE por Bloco, DRE por Competência) continua sem mudança (default
     // 'competencia', comportamento intocado).
-    const dataRef = modo === 'caixa' ? m.dt_pagamento : (m.dt_registro || m.dt_emissao);
+    // FIX 28/08/2026 (pedido Lucas): categoria "2.01.01" (Industrialização
+    // Blue Line / "Serviços Novah (Facção)" na planilha — pagamento
+    // intercompany KMNO→Novah) tem dt_pagamento travado em datas antigas
+    // no Omie (confirmado via SQL: título emitido 02/06/2026 aparece com
+    // dt_pagamento 05/05/2026, mecanismo de compensação entre contas-
+    // corrente das duas empresas não gera data de baixa real) — some do
+    // Caixa a partir de Junho mesmo com 204 títulos PAGO no mês (R$105.613,86).
+    // Nessa categoria específica, usa dt_registro/dt_emissao mesmo em modo
+    // Caixa (aproximação: data de emissão do título como substituta de
+    // pagamento real, já que o Omie não fornece uma data de baixa confiável
+    // pra esse mecanismo). Só afeta 2.01.01 — resto do Caixa intocado.
+    const dataRef = (modo === 'caixa' && m.cod_categoria !== '2.01.01') ? m.dt_pagamento : (m.dt_registro || m.dt_emissao);
     if (!dataRef) return;
     const d = dayjs(dataRef);
     if (d.isBefore(monthStart) || !d.isBefore(monthEnd)) return;
@@ -9980,7 +10018,13 @@ function buildTodosBlocosRealizado(empresa, categories, movements, monthStart, m
     // função manual): "Adiantamento de Clientes" volta a compor Receita
     // Bruta/Recebimento direto, como era antes de 14/08. Só NOVAH
     // (KMNO/RT nunca tiveram esse código).
-    B.receita_bruta       = buildBlocoArvorePorPrefixo('receita_bruta', 'Receita Bruta', 'R', ['1.01.', '1.02.97', '1.04.01'], empresa, categories, totalPorCodigo);
+    // AJUSTADO 28/08/2026 (pedido Lucas): "Adiantamento de Clientes"
+    // (1.04.01) saiu daqui — não é faturamento de venda, é
+    // adiantamento/empréstimo. Vai para "Recebimento Empréstimos/
+    // Adiantamentos" (ver B.emprestimos_recebidos abaixo), mesmo padrão
+    // já aplicado na KMNO no mesmo dia. Total de Recebimento não muda,
+    // só a linha onde o valor aparece na árvore.
+    B.receita_bruta       = buildBlocoArvorePorPrefixo('receita_bruta', 'Receita Bruta', 'R', ['1.01.', '1.02.97'], empresa, categories, totalPorCodigo);
     // Bloco ISOLADO (17/08/2026, pedido Lucas): "Transferências entre
     // contas" (1.02.96) — dinheiro só mudando de banco, não é venda.
     // Catalogado aqui só pra existir no código (caso precise no
@@ -10000,7 +10044,11 @@ function buildTodosBlocosRealizado(empresa, categories, movements, monthStart, m
     // ganham bloco PRÓPRIO abaixo, senão contariam 2x.
     B.despesas_financeiras = buildBlocoArvorePorPrefixo('despesas_financeiras', 'Despesas Financeiras', 'P', '2.05.', empresa, categories, totalPorCodigo, ['2.05.03']);
     B.receitas_financeiras = buildBlocoArvorePorPrefixo('receitas_financeiras', 'Receitas Financeiras', 'R', '1.02.', empresa, categories, totalPorCodigo, ['1.02.98', '1.02.99', '1.02.97'], ['Transferências entre contas', 'Transferencias entre contas']);
-    B.emprestimos_recebidos = buildBlocoArvorePorPrefixo('emprestimos_recebidos', 'Recebimento Empréstimos', 'R', ['1.02.98', '1.02.99'], empresa, categories, totalPorCodigo);
+    // AJUSTADO 28/08/2026 (pedido Lucas): "1.04.01" (Adiantamento de
+    // Clientes) adicionado aqui — saiu de B.receita_bruta acima, entra
+    // no mesmo bloco "Recebimento Empréstimos/Adiantamentos" que já
+    // existia pra Recebimentos Empréstimos/Kiko.
+    B.emprestimos_recebidos = buildBlocoArvorePorPrefixo('emprestimos_recebidos', 'Recebimento Empréstimos', 'R', ['1.02.98', '1.02.99', '1.04.01'], empresa, categories, totalPorCodigo);
     B.emprestimos_pagos    = buildBlocoArvorePorPrefixo('emprestimos_pagos', 'Pagamento de Empréstimos', 'P', ['2.05.03'], empresa, categories, totalPorCodigo);
   }
   if (empresa === 'KMNO' && !monthStart.isBefore(EXCEL_CONGELADO_ATE)) {
@@ -10040,6 +10088,25 @@ function buildTodosBlocosRealizado(empresa, categories, movements, monthStart, m
     // verdade). Convertido pra código (1.02.), mesmo padrão já usado na
     // Novah -- exclui empréstimos/transferências, que não são receita.
     B.receitas_financeiras = buildBlocoArvorePorPrefixo('receitas_financeiras', 'Receitas Financeiras', 'R', '1.02.', empresa, categories, totalPorCodigo, ['1.02.98', '1.02.99', '1.02.97'], ['Transferências entre contas', 'Transferencias entre contas']);
+    // FIX 28/08/2026 (pedido Lucas): "Faturamento"/Recebimento da KMNO
+    // ainda usava lista de nomes fixa (DRE_ARVORE_BLOCOS, só 3 categorias:
+    // Vendas Direta/Site/Revenda). Convertido pra código/prefixo, mesmo
+    // padrão já usado no resto da KMNO.
+    // AJUSTADO no mesmo dia (pedido Lucas, 2ª rodada): "Adiantamento de
+    // Clientes" (1.04.01) saiu daqui — não é faturamento de venda, é
+    // adiantamento/empréstimo. Vai para "Recebimentos Empréstimos" (ver
+    // abaixo), física e logicamente. Cliente placeholder "KMNO PREVISAO"
+    // já é excluído acima, no loop de buildTotalPorCategoriaEmpresa.
+    B.faturamento = buildBlocoArvorePorPrefixo('faturamento', 'Faturamento', 'R', ['1.01.'], empresa, categories, totalPorCodigo);
+    // FIX 28/08/2026 (pedido Lucas): "Recebimentos Empréstimos" da KMNO
+    // ainda usava lista de nomes fixa (DRE_ARVORE_BLOCOS: "Recebimento
+    // Empréstimos de Terceiros/Bancários") — sem dado real batendo nesses
+    // nomes em Jun/Jul/2026 (confirmado por SQL, nada perdido). Passa a
+    // usar "Adiantamento de Clientes" (1.04.01) por código — mesmo
+    // cliente placeholder "KMNO PREVISAO" excluído acima se aplica aqui
+    // também (mesma checagem no loop, independe de qual bloco final usa
+    // o valor).
+    B.recebimentos_emprestimos = buildBlocoArvorePorPrefixo('recebimentos_emprestimos', 'Recebimentos Empréstimos', 'R', ['1.04.01'], empresa, categories, totalPorCodigo);
   }
   if (empresa === 'RT' && !monthStart.isBefore(EXCEL_CONGELADO_ATE)) {
     B.despesas_adm = buildBlocoArvorePorPrefixo('despesas_adm', 'Despesas Administração', 'P', '2.04.', empresa, categories, totalPorCodigo);
