@@ -525,6 +525,27 @@
   .fin-tbl-evolucao-amarelo th.media, .fin-tbl-evolucao-amarelo td.media {
     background: rgba(180, 160, 90, 0.14);
   }
+  /* Pedido 30/08 (Word Lucas_Ajustes): cor de fundo diferente do padrão
+     cinza (--navy-2) só na tabela "Resumo (Grupo, R$)" da view DRE por
+     Caixa — usa o tom mint/verde-água (--mint, #9CCBBB) já presente na
+     paleta, pra destacar Total/Média/AV% sem reaproveitar o amarelo já
+     usado em outras 2 tabelas (Vendas x Faturamento / Evolução Mensal).
+     Escopado só nesta tabela (id grupoResumoDetalhadoBody), não afeta a
+     tabela irmã dentro do DRE por Competência nem qualquer outra. */
+  /* Essa tabela específica não marca Total/Média com classe própria no
+     JS (só a AV% final tem .total-pct) — as 3 últimas colunas de toda
+     linha são sempre Total, Média, AV%, então pega por posição em vez
+     de classe. EXCLUI linhas .dre-tbl-row-amarelo (destaque) — o
+     amarelo tem prioridade sobre o mint na mesma linha (bug 31/08:
+     antes o mint, por ter mais especificidade que a regra do amarelo,
+     "vazava" por cima do amarelo nessas 3 colunas mesmo nas linhas de
+     destaque). Ordem de prioridade visual pedida: amarelo > verde >
+     verde-claro > branco/off-white. */
+  .fin-tbl-resumo-grupo-mint tr:not(.dre-tbl-row-amarelo) th:nth-last-child(-n+3),
+  .fin-tbl-resumo-grupo-mint tr:not(.dre-tbl-row-amarelo) td:nth-last-child(-n+3) {
+    background: rgba(156, 203, 187, 0.30) !important;
+    font-weight: 600;
+  }
   /* Pedido 29/07: linhas em negrito (destaque) do card "Resumo (Grupo,
      R$)" — Receita Líquida, CMV, Margem de Contribuição, Resultado
      Operacional (EBITDA), Resultado Líquido (Lucro Líquido), Saldo
@@ -3070,7 +3091,7 @@
         <div class="bloco-head"><div class="bloco-titulo">Resumo (Grupo, R$)</div></div>
         <div class="bloco-body">
           <div class="dre-tbl-wrap">
-            <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col">
+            <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col fin-tbl-resumo-grupo-mint">
               <tr id="grupoResumoDetalhadoHeader"><th>Descrição</th></tr>
               <tbody id="grupoResumoDetalhadoBody"></tbody>
             </table>
@@ -10059,6 +10080,19 @@ function buildTodosBlocosRealizado(empresa, categories, movements, monthStart, m
     B.receitas_financeiras = buildBlocoArvorePorPrefixo('receitas_financeiras', 'Receitas Financeiras', 'R', '1.02.', empresa, categories, totalPorCodigo, ['1.02.98', '1.02.99', '1.02.97'], ['Transferências entre contas', 'Transferencias entre contas']);
     B.emprestimos_recebidos = buildBlocoArvorePorPrefixo('emprestimos_recebidos', 'Recebimento Empréstimos', 'R', ['1.02.98', '1.02.99', '1.04.01'], empresa, categories, totalPorCodigo);
     B.emprestimos_pagos    = buildBlocoArvorePorPrefixo('emprestimos_pagos', 'Pagamento de Empréstimos', 'P', ['2.05.03'], empresa, categories, totalPorCodigo);
+  }
+  // FIX 31/08/2026 (pedido Word Lucas_Ajustes 30/08, "linhas não abrem"):
+  // esse mesmo bloco (emprestimos_recebidos/emprestimos_pagos/dividendos)
+  // só existia dentro do `if (empresa === 'NOVAH'...)` acima e do
+  // `if (empresa === 'KMNO'...)` mais abaixo — RT nunca tinha esses 3
+  // calculados, ficavam sempre `undefined` independente de existir
+  // categoria/título real no Omie (RT TEM títulos reais em "Pagamento de
+  // Empréstimos", 2.05.03 — R$97.500 em 15 parcelas, confirmado no banco).
+  // Réplica do mesmo cálculo, escopada só pra RT.
+  if (empresa === 'RT' && !monthStart.isBefore(EXCEL_CONGELADO_ATE)) {
+    B.emprestimos_recebidos = buildBlocoArvorePorPrefixo('emprestimos_recebidos', 'Recebimento Empréstimos', 'R', ['1.02.98', '1.02.99', '1.04.01'], empresa, categories, totalPorCodigo);
+    B.emprestimos_pagos    = buildBlocoArvorePorPrefixo('emprestimos_pagos', 'Pagamento de Empréstimos', 'P', ['2.05.03'], empresa, categories, totalPorCodigo);
+    B.dividendos           = buildBlocoArvorePorPrefixo('dividendos', 'Dividendos', 'P', '2.15.', empresa, categories, totalPorCodigo);
   }
   if (empresa === 'KMNO' && !monthStart.isBefore(EXCEL_CONGELADO_ATE)) {
     B.despesas_adm = buildBlocoArvorePorPrefixo('despesas_adm', 'Despesas Administração', 'P', ['2.04.', '2.17.'], empresa, categories, totalPorCodigo);
@@ -17526,11 +17560,21 @@ function buildResumoCategoriasMes(empresa, categories, movements, monthStart, mo
       // FIX (11/08/2026): idem KMNO/NOVAH — usa o bloco receitas_financeiras
       // dedicado em vez de filtrar 'R' dentro de despesas_financeiras.
       receitasFinanceiras: itensParaCategoria(B.receitas_financeiras.itens),
-      distribuicao: {},
+      // FIX 31/08/2026 (pedido Word Lucas_Ajustes 30/08, "linhas não
+      // abrem"): antes essas 3 linhas eram {} hardcoded pra RT, mesmo
+      // buildTodosBlocosRealizado já calculando B.dividendos/
+      // emprestimos_recebidos/emprestimos_pagos certinho pra qualquer
+      // empresa (igual KMNO/Novah). "Distribuição de Lucros" continua
+      // vazia na prática (RT não tem categoria 2.15.x cadastrada — não é
+      // bug, é ausência real de dado), mas "Pagamento de Empréstimos"
+      // (RT tem R$97.500 em títulos, categoria 2.05.03) e "Recebimento
+      // Empréstimos" agora abrem de verdade e mostram a categoria (com
+      // R$0 se ainda não foi pago/recebido no período — regime de caixa).
+      distribuicao: itensParaCategoria((B.dividendos || { itens: [] }).itens),
       capex: itensParaCategoria(B.investimentos.itens),
       refis: itensParaCategoria(B.outros.itens), // "REFIS (Parcelas)" está aqui
-      recebimentoEmprestimos: {},
-      pagamentoEmprestimos: {},
+      recebimentoEmprestimos: itensParaCategoria((B.emprestimos_recebidos || { itens: [] }).itens),
+      pagamentoEmprestimos: itensParaCategoria((B.emprestimos_pagos || { itens: [] }).itens),
     };
   }
   return null;
@@ -19332,7 +19376,7 @@ function renderGrupoBancos(monthStart, monthEnd) {
   });
 
   const valorBanco = (banco, m) => {
-    if (!m.live && empresaDoBanco(banco) === 'RT') return null; // RT sem fonte confirmada Jan-Mai
+    if (empresaDoBanco(banco) === 'RT' && !m.live) return null; // FIX 31/08 (pedido Lucas, correção do fix anterior): RT segue a MESMA regra de KMNO/Novah -- sem dado só nos meses congelados (Jan-Mai), dado real em qualquer mês ao vivo (Jun em diante), não só a partir de Jul
     return m.live ? Number((liveByMes[m.chave] && liveByMes[m.chave][banco]) || 0) : Number((d.valores[banco] && d.valores[banco][m.frozenIdx]) || 0);
   };
   const totalMes = (m) => m.live ? Object.values(liveByMes[m.chave] || {}).reduce((s, v) => s + v, 0) : (d.total[m.frozenIdx] || 0);
@@ -19340,7 +19384,7 @@ function renderGrupoBancos(monthStart, monthEnd) {
   // definição de saldo bancário); no último mês congelado (sem coluna
   // seguinte) usa `fimUltimoMesCongelado`. Banco sem dado = null ("—").
   const valorBancoFim = (banco, m) => {
-    if (!m.live && empresaDoBanco(banco) === 'RT') return null; // RT sem fonte confirmada Jan-Mai
+    if (empresaDoBanco(banco) === 'RT' && !m.live) return null; // FIX 31/08 (pedido Lucas, correção do fix anterior): RT segue a MESMA regra de KMNO/Novah -- sem dado só nos meses congelados (Jan-Mai), dado real em qualquer mês ao vivo (Jun em diante), não só a partir de Jul
     if (m.live) return Number((liveFimByMes[m.chave] && liveFimByMes[m.chave][banco]) || 0);
     const prox = m.frozenIdx + 1;
     if (prox < d.meses.length) return Number((d.valores[banco] && d.valores[banco][prox]) || 0);
@@ -19368,16 +19412,14 @@ function renderGrupoBancos(monthStart, monthEnd) {
   mesesValidos.filter(m => m.live).forEach(m => Object.keys(liveByMes[m.chave] || {}).forEach(b => bancosSet.add(b)));
 
   // FIX 28/07 (pedido): 1 empresa selecionada = só os bancos dela.
-  // FIX 05/08: RT sozinha NUNCA mostra banco próprio — mesma regra já
-  // usada no Resumo de Capital (RT sem fonte de saldo bancário
-  // standalone, as contas dela ficam dentro da KMNO).
+  // FIX 31/08 (pedido Word Lucas_Ajustes 30/08): RT sozinha ANTES tinha
+  // bloqueio incondicional aqui (nunca mostrava banco próprio, mesmo em
+  // meses ao vivo) — removido. RT agora segue o mesmo caminho de
+  // KMNO/Novah (filtra bancos por empresaDoBanco), e quem decide se
+  // mostra dado ou "—" é a guarda dentro de valorBanco/valorBancoFim
+  // (RT antes de 01/07/2026 = null, a partir daí = dado real).
   const umaEmpresa = selectedCompanyKeys && selectedCompanyKeys.length === 1 ? selectedCompanyKeys[0] : null;
-  const bancosFiltrados = umaEmpresa === 'RT' ? [] : (umaEmpresa ? [...bancosSet].filter(b => empresaDoBanco(b) === umaEmpresa) : [...bancosSet]);
-  if (umaEmpresa === 'RT') {
-    header.innerHTML = '<th>Banco</th>';
-    body.innerHTML = '<tr><td style="color:var(--bone-dim);">RT não tem saldo bancário próprio — contas ficam dentro do total da KMNO.</td></tr>';
-    return;
-  }
+  const bancosFiltrados = umaEmpresa ? [...bancosSet].filter(b => empresaDoBanco(b) === umaEmpresa) : [...bancosSet];
   // Total recalculado sobre o conjunto filtrado (soma real dos bancos
   // exibidos) — em vez do d.total fixo do Grupo, que não faz sentido
   // quando é só 1 empresa.
