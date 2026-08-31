@@ -546,6 +546,31 @@
     background: rgba(156, 203, 187, 0.30) !important;
     font-weight: 600;
   }
+  /* Pedido 31/08/2026 (Word Lucas_Ajustes, item "Mudar a cor" + prints
+     seguintes indicando mais 2 tabelas): mesmo mint acima, aplicado em
+     mais 2 locais:
+     1) "Resumo (Grupo, R$)" da DRE por Competência (id
+        grupoResumoTesteBody) — essa tabela JÁ usa classes próprias
+        (.total/.media/.total-pct) no JS, diferente da de Caixa, então
+        pega direto por classe, sem precisar de nth-last-child. São 4
+        colunas no total (Total, AV%, Média, AV%).
+     2) "Resumo (KMNO, R$) — CMC real de estoque" da DRE por CMC (id
+        resumoCmcKmnoBody) — mesma estrutura da tabela original (sem
+        classe própria em Total/Média), usa nth-last-child. */
+  .fin-tbl-resumo-competencia-mint tr:not(.dre-tbl-row-amarelo) th.total,
+  .fin-tbl-resumo-competencia-mint tr:not(.dre-tbl-row-amarelo) td.total,
+  .fin-tbl-resumo-competencia-mint tr:not(.dre-tbl-row-amarelo) th.media,
+  .fin-tbl-resumo-competencia-mint tr:not(.dre-tbl-row-amarelo) td.media,
+  .fin-tbl-resumo-competencia-mint tr:not(.dre-tbl-row-amarelo) th.total-pct,
+  .fin-tbl-resumo-competencia-mint tr:not(.dre-tbl-row-amarelo) td.total-pct {
+    background: rgba(156, 203, 187, 0.30) !important;
+    font-weight: 600;
+  }
+  .fin-tbl-resumo-cmc-mint tr:not(.dre-tbl-row-amarelo) th:nth-last-child(-n+3),
+  .fin-tbl-resumo-cmc-mint tr:not(.dre-tbl-row-amarelo) td:nth-last-child(-n+3) {
+    background: rgba(156, 203, 187, 0.30) !important;
+    font-weight: 600;
+  }
   /* Pedido 29/07: linhas em negrito (destaque) do card "Resumo (Grupo,
      R$)" — Receita Líquida, CMV, Margem de Contribuição, Resultado
      Operacional (EBITDA), Resultado Líquido (Lucro Líquido), Saldo
@@ -3373,7 +3398,7 @@
         <div class="bloco-head"><div class="bloco-titulo">Resumo (Grupo, R$)</div></div>
         <div class="bloco-body">
           <div class="dre-tbl-wrap">
-            <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col">
+            <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col fin-tbl-resumo-competencia-mint">
               <tr id="grupoResumoTesteHeader"><th>Descrição</th></tr>
               <tbody id="grupoResumoTesteBody"></tbody>
             </table>
@@ -3546,7 +3571,7 @@
             </div>
             <div id="resumoCmcKmnoStatusOficial" style="padding:0 16px 8px;font-size:11px;font-weight:600;"></div>
             <div class="dre-tbl-wrap">
-              <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col">
+              <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col fin-tbl-resumo-cmc-mint">
                 <tr id="resumoCmcKmnoHeader"><th>Descrição</th></tr>
                 <tbody id="resumoCmcKmnoBody"></tbody>
               </table>
@@ -5011,7 +5036,13 @@ const INDICADORES_SECOES = [
   },
 ];
 
-const INDICADORES_EMPRESAS = ['KMNO', 'NOVAH', 'RT'];
+// FIX 31/08/2026 (pedido Lucas, Word Lucas_Ajustes): card Indicadores
+// trocado de 3 empresas (KMNO/Novah/RT) pra só KMNO. Só essa linha
+// controla célula de dado e gráfico (celulas/valores/labels mais
+// abaixo já usam esse array); cabeçalho da tabela e colgroup (linhas
+// ~5145-5157) são hardcoded HTML, ajustados junto pra bater com 1 só
+// empresa em vez de 3.
+const INDICADORES_EMPRESAS = ['KMNO'];
 
 // Ícone de edição (pedido 19/08/2026: "o lápis emoji tá feio, troca
 // pra combinar com a vibe do dash") — SVG inline com var(--green),
@@ -5104,7 +5135,7 @@ async function renderIndicadores() {
           ${celulas}
         </tr>
         <tr data-grafico-indicador="${rowId}" style="display:none;">
-          <td colspan="7" style="padding:16px 24px;">
+          <td colspan="3" style="padding:16px 24px;">
             <div style="position:relative;height:220px;">
               <canvas id="chart-${rowId}"></canvas>
             </div>
@@ -5120,15 +5151,13 @@ async function renderIndicadores() {
               <colgroup>
                 <col style="width:280px;">
                 <col style="width:80px;"><col style="width:80px;">
-                <col style="width:80px;"><col style="width:80px;">
-                <col style="width:80px;"><col style="width:80px;">
               </colgroup>
               <tr>
                 <th rowspan="2" class="dre-tbl-sticky">Indicador</th>
-                <th colspan="2">KMNO</th><th colspan="2" class="indic-col-novah-head">Novah</th><th colspan="2">RT</th>
+                <th colspan="2">KMNO</th>
               </tr>
               <tr>
-                <th>Real</th><th>Meta</th><th class="indic-col-novah-head">Real</th><th class="indic-col-novah-head">Meta</th><th>Real</th><th>Meta</th>
+                <th>Real</th><th>Meta</th>
               </tr>
               ${linhas}
             </table>
