@@ -5384,7 +5384,20 @@ function isExcludedFromDre(cat, label) {
 }
 
 function isExcludedFromDfc(cat) {
-  return !!(cat && (cat.nao_fluxo || cat.transferencia));
+  if (!cat) return false;
+  if (cat.nao_fluxo || cat.transferencia) return true;
+  // FIX 31/08/2026: o campo cat.transferencia nunca vem preenchido no
+  // cadastro (confirmado nas 3 empresas) — a categoria "Transferência
+  // entre contas" (RT 2.05.98, KMNO 1.04.04/2.05.91, Novah 1.02.96/2.08.93)
+  // não era excluída do rollback bancário/Prova Real, inflando Saídas com
+  // dinheiro que só mudou de conta dentro da mesma empresa. Mesma exclusão
+  // por nome já existia isolada em buildDfcDetalheCategoriaAgrupado (Novah,
+  // pedido 14/08) — generalizada aqui pra cobrir os outros pontos que usam
+  // isExcludedFromDfc (rollback de saldo, Prova Real, DFC nativo).
+  const desc = String(cat.descricao || '').trim().toLowerCase();
+  if (desc === 'transferência entre contas' || desc === 'transferencia entre contas'
+      || desc === 'transferências entre contas' || desc === 'transferencias entre contas') return true;
+  return false;
 }
 
 // Monta um mapa "empresa|codigo" -> categoria. Necessário porque cada
@@ -19129,10 +19142,21 @@ function buildProvaRealPorEmpresaMesVivo(empresa, mesStart) {
   const saldoInicial = calcSaldoInicialRealizado(analiseBancosContasCache, dreArvoreCategoriesCache, analiseBancosMovimentosCache, empresa, mesStart);
   const saldoReal = calcSaldoInicialRealizado(analiseBancosContasCache, dreArvoreCategoriesCache, analiseBancosMovimentosCache, empresa, mesEndExcl);
   const catByKey = buildCatByEmpresaCodigo(dreArvoreCategoriesCache || []);
+  // FIX 31/08/2026: faltava restringir Entradas/Saídas às contas de fluxo
+  // de caixa real (mesmo filtro que calcSaldoInicialRealizado já aplica
+  // pro Saldo Inicial/Real) — sem isso, movimentos de contas virtuais
+  // (ex: fatura de cartão de crédito, fluxo_caixa=false) entravam em
+  // Entradas/Saídas mas ficavam fora do rollback bancário, causando a
+  // "Diferença (Real − Calculado)" do card Prova Real (confirmado: RT
+  // Junho, 7 movimentos de 2 cartões de crédito, efeito exato R$14.899,05
+  // = a diferença mostrada na tela).
+  const contasCaixa = contasFluxoCaixa(analiseBancosContasCache, empresa);
+  const codsCaixaValidos = new Set(contasCaixa.map(c => c.n_cod_cc));
   let entradas = 0, saidas = 0;
   (analiseBancosMovimentosCache || []).forEach(m => {
     if (empresa !== 'TODAS' && m._empresa !== empresa) return;
     if (!m.dt_pagamento) return;
+    if (m.cod_cc != null && !codsCaixaValidos.has(m.cod_cc)) return;
     const d = dayjs(m.dt_pagamento);
     if (d.isBefore(mesStart) || !d.isBefore(mesEndExcl)) return;
     if (m.cod_categoria) {
