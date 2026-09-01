@@ -5316,6 +5316,8 @@ function somaCmcVendasPeriodo(empresa, monthStart, monthEnd) {
 // dashboard, sem fonte no Omie.
 let dreArvoreCmvCache = null;
 let dreArvoreFatUnidCache = null;
+let dreArvorePecasFaturadasCache = null; // dash_pecas_faturadas, usado por renderSaidasEntradasPecasTudo (01/09/2026)
+let provaRealExtratoCache = null; // extrato bancario completo (com cod_cc), usado so pela Prova Real (01/09/2026)
 let dreArvoreFinanciamentosCache = null;
 let dreArvoreParcelasCache = null;
 let dreArvoreInadimplenciaCache = null;
@@ -12202,6 +12204,11 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   // Filtra cod_titulo nulo/0 pra não contar de novo o que já vem de título
   // formal (accounts_payable/receivable).
   const extratoSemTituloPath = 'dash_current_account_transactions?select=dt_lanc,valor_lanc,cod_categoria,natureza,cod_titulo,origem';
+  // NOVO (01/09/2026): extrato bancário COMPLETO (com cod_cc), usado só
+  // pela Prova Real dos Caixas -- diferente de extratoSemTituloPath acima
+  // (que só pega origem EXTR/EXTP sem título, um subconjunto pequeno).
+  // Confirmado bater exato com o nativo depois de limpar órfãos (RT Jun).
+  const extratoCompletoPath = 'dash_current_account_transactions?select=dt_lanc,valor_lanc,natureza,cod_cc,origem,cod_agrup';
   // CMC (Custo Médio das Vendas) — resolvido em 17/07/2026 via endpoint
   // estoque/consulta/MovimentoEstoque do Omie, que traz o CMC real de
   // cada saída de venda (codOrigem='VEN'), na data em que aconteceu —
@@ -12213,6 +12220,10 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   // dashboard, substituindo a antiga planilha DRE_2026_KMNO_e_NOVAH):
   // CMV por produto e faturamento por unidades vendidas, por empresa/mês.
   const cmvPath = 'dash_cmv_produtos?select=ano,mes,modelo,qtd_venda,qtd_bonificado,qtd_troca_garantia,qtd_defeito,qtd_total_pecas,custo_unitario,venda_total';
+  // Pecas faturadas por grupo (Faixa/Calca/Gandola/Bermuda/RashGuard/
+  // Kimono GB), usado pelo card "Saidas e Entradas x Pecas Faturadas" —
+  // ver renderSaidasEntradasPecasTudo(). Adicionado 01/09/2026.
+  const pecasFaturadasPath = 'dash_pecas_faturadas?select=ano,mes,grupo,codigo_produto,quantidade';
   const fatUnidPath = 'dash_faturamento_unidades?select=ano,mes,modelo,quantidade';
   // Financiamentos/consórcios de longo prazo e inadimplência de clientes —
   // sem recorrência mensal, por isso não entram na grade de blocos, mas
@@ -12245,7 +12256,7 @@ async function carregarDadosDreArvoreTodasEmpresas() {
     }
   };
 
-  const [categories, receivable, payable, fmCategFallback, fmRegistroFallback, cmvProdutos, fatUnidades, financiamentos, parcelas, inadimplencia, nfe, extratoSemTitulo, cmcVendas] = await Promise.all([
+  const [categories, receivable, payable, fmCategFallback, fmRegistroFallback, cmvProdutos, fatUnidades, financiamentos, parcelas, inadimplencia, nfe, extratoSemTitulo, cmcVendas, pecasFaturadas, extratoCompleto] = await Promise.all([
     buscarPorEmpresa(catPath),
     buscarPorEmpresa(recPath),
     buscarPorEmpresa(payPath),
@@ -12259,9 +12270,13 @@ async function carregarDadosDreArvoreTodasEmpresas() {
     buscarPorEmpresa(nfePath),
     buscarPorEmpresa(extratoSemTituloPath),
     buscarPorEmpresa(cmcVendasPath),
+    buscarPorEmpresa(pecasFaturadasPath),
+    buscarPorEmpresa(extratoCompletoPath),
   ]);
   dreArvoreCmvCache = cmvProdutos;
   dreArvoreFatUnidCache = fatUnidades;
+  dreArvorePecasFaturadasCache = pecasFaturadas;
+  provaRealExtratoCache = extratoCompleto;
   dreArvoreFinanciamentosCache = financiamentos;
   dreArvoreParcelasCache = parcelas;
   dreArvoreInadimplenciaCache = inadimplencia;
@@ -13389,14 +13404,20 @@ const SAIDAS_FATURAMENTO_PECAS_DADOS = {
 };
 
 const FATURAMENTO_PECAS_DADOS = {
-  gbCalca:     [1000, 1022, 700, 1128, 1122, 2588, 2811],
-  gbGandola:   [1000, 1022, 700, 1128, 1122, 2588, 2811],
-  kmnoCalca:   [915, 1256, 1483, 1787, 1680, 1846, 2247],
-  kmnoGandola: [929, 1252, 1492, 1768, 1680, 1736, 2206],
-  bermuda:     [449, 280, 273, 278, 381, 536, 294],
-  rashGuard:   [1154, 1166, 1076, 677, 1253, 1159, 1236],
-  faixaKmno:   [298, 524, 852, 586, 629, 1100, 1023],
-  faixaRt:     [null, null, null, 1154, 1460, 2818, 3846],
+  // Jan-Mai: fixo da planilha (congelado). Jun-Ago: valores abaixo sao
+  // so FALLBACK -- normalmente recalculados ao vivo em
+  // renderSaidasEntradasPecasTudo() a partir de dash_pecas_faturadas.
+  // "gbCalca"/"gbGandola" antigos REMOVIDOS (01/09/2026): produto real
+  // vendido e "Kimono GB" (peca unica, nao existe calca/gandola GB
+  // vendida separada -- confirmado com Lucas). kimonoGb usa o mesmo
+  // numero que gbCalca/gbGandola tinham (eram identicos, duplicados).
+  kimonoGb:    [1000, 1022, 700, 1128, 1122, 0, 0, 0],
+  kmnoCalca:   [915, 1256, 1483, 1787, 1680, 1846, 2247, 2247],
+  kmnoGandola: [929, 1252, 1492, 1768, 1680, 1736, 2206, 2206],
+  bermuda:     [449, 280, 273, 278, 381, 536, 294, 294],
+  rashGuard:   [1154, 1166, 1076, 677, 1253, 1159, 1236, 1236],
+  faixaKmno:   [298, 524, 852, 586, 629, 1100, 1023, 1023],
+  faixaRt:     [null, null, null, 1154, 1460, 2818, 3846, 3846],
 };
 // Colunas Meta Acum/Dif. acum/Meta 2026/Tendência 2026/Dif. ano — fonte:
 // aba "Revisada CCC" da planilha (06/08/2026). Só existem pra tabela de
@@ -13404,8 +13425,10 @@ const FATURAMENTO_PECAS_DADOS = {
 // Faturamento x Peças, em R$) não têm essas colunas preenchidas na
 // planilha ainda, então continuam mostrando "-----".
 const FATURAMENTO_PECAS_EXTRAS = {
-  gbCalca:     { metaAcum: 10560, difAcumQtd: -189,  difAcumPct: -0.017897727272727273, meta2026: 25560, tend2026: 27871, difAnoQtd: 2311,  difAnoPct: 0.09041471048513303 },
-  gbGandola:   { metaAcum: 10560, difAcumQtd: -189,  difAcumPct: -0.017897727272727273, meta2026: 25560, tend2026: 27871, difAnoQtd: 2311,  difAnoPct: 0.09041471048513303 },
+  // kimonoGb (01/09/2026): soma das metas antigas gbCalca+gbGandola
+  // (eram identicas -- provavel duplicata de cadastro na planilha
+  // original, mantido o total combinado como meta do Kimono GB unico).
+  kimonoGb:    { metaAcum: 21120, difAcumQtd: -378,  difAcumPct: -0.017897727272727273, meta2026: 51120, tend2026: 55742, difAnoQtd: 4622,  difAnoPct: 0.09041471048513303 },
   kmnoCalca:   { metaAcum: 10717, difAcumQtd: 497,   difAcumPct: 0.046374918354016983,  meta2026: 19717, tend2026: 23414, difAnoQtd: 3697,  difAnoPct: 0.18750316985342597 },
   kmnoGandola: { metaAcum: 10607, difAcumQtd: 456,   difAcumPct: 0.0429904779862355,    meta2026: 19607, tend2026: 23263, difAnoQtd: 3656,  difAnoPct: 0.18646401795277198 },
   totalGb:     { metaAcum: 42444, difAcumQtd: 575,   difAcumPct: 0.013547262274997644,  meta2026: 90444, tend2026: 102419, difAnoQtd: 11975, difAnoPct: 0.1324023705276193 },
@@ -13612,14 +13635,38 @@ function renderSaidasEntradasPecasTudo() {
   if (wrapPcs) {
     const P = FATURAMENTO_PECAS_DADOS;
     const E = FATURAMENTO_PECAS_EXTRAS;
-    const totalGb = P.gbCalca.map((v, i) => v + P.gbGandola[i] + P.kmnoCalca[i] + P.kmnoGandola[i]);
-    const totalGeral = P.gbCalca.map((v, i) => totalGb[i] + P.bermuda[i] + P.rashGuard[i] + P.faixaKmno[i] + (P.faixaRt[i] || 0));
+    // NOVO (01/09/2026): meses ao vivo (Jun/2026+) recalculam
+    // quantidade de pecas por grupo direto de dash_pecas_faturadas.
+    // Jan-Mai continuam com os numeros fixos da planilha (congelados,
+    // ja validados). "kimono_gb" e grupo novo (produto real e Kimono
+    // GB completo, nao vendido em calca/gandola separadas). calca/
+    // gandola somam so KMNO (decisao Lucas 01/09/2026, RT/Novah nao
+    // entram nessas 2 colunas especificas).
+    if (dreArvorePecasFaturadasCache && dreArvorePecasFaturadasCache.length) {
+      const MESES_PCS_VIVO = ['2026-06', '2026-07', '2026-08'];
+      const somaGrupoMes = (grupo, chaveMes, empresaFiltro) => {
+        const [anoStr, mesStr] = chaveMes.split('-');
+        const ano = Number(anoStr), mes = Number(mesStr);
+        return dreArvorePecasFaturadasCache
+          .filter(r => r.grupo === grupo && Number(r.ano) === ano && Number(r.mes) === mes && (!empresaFiltro || r._empresa === empresaFiltro))
+          .reduce((s, r) => s + Number(r.quantidade || 0), 0);
+      };
+      MESES_PCS_VIVO.forEach((chaveMes, i) => {
+        const idx = 5 + i; // Jun=indice 5, Jul=6, Ago=7 (Jan=0)
+        P.kimonoGb[idx]    = somaGrupoMes('kimono_gb', chaveMes, null);
+        P.kmnoCalca[idx]   = somaGrupoMes('calca', chaveMes, 'KMNO');
+        P.kmnoGandola[idx] = somaGrupoMes('gandola', chaveMes, 'KMNO');
+        P.bermuda[idx]     = somaGrupoMes('bermuda', chaveMes, null);
+        P.rashGuard[idx]   = somaGrupoMes('rash_guard', chaveMes, null);
+        P.faixaKmno[idx]   = somaGrupoMes('faixa_kmno', chaveMes, null);
+        P.faixaRt[idx]     = somaGrupoMes('faixa_gb_rt', chaveMes, null);
+      });
+    }
+    const totalGeral = P.kimonoGb.map((v, i) => (v||0) + (P.kmnoCalca[i]||0) + (P.kmnoGandola[i]||0) + (P.bermuda[i]||0) + (P.rashGuard[i]||0) + (P.faixaKmno[i]||0) + (P.faixaRt[i]||0));
     wrapPcs.innerHTML = renderTabelaSaidasEntradasPecas([
-      { label: 'GB Calça', dados: P.gbCalca, extra: E.gbCalca },
-      { label: 'GB Gandola', dados: P.gbGandola, extra: E.gbGandola },
+      { label: 'Kimono GB', dados: P.kimonoGb, extra: E.kimonoGb },
       { label: 'KMNO Calça', dados: P.kmnoCalca, extra: E.kmnoCalca },
       { label: 'KMNO Gandola', dados: P.kmnoGandola, extra: E.kmnoGandola },
-      { label: 'Total', dados: totalGb, amarelo: true, extra: E.totalGb },
       { label: 'Bermuda', dados: P.bermuda, extra: E.bermuda },
       { label: 'Rash Guard', dados: P.rashGuard, extra: E.rashGuard },
       { label: 'Faixa KMNO', dados: P.faixaKmno, extra: E.faixaKmno },
@@ -13655,16 +13702,50 @@ const ANALISE_FATURAMENTO_ANO_A_ANO = {
 // Impostos presumidos da KMNO, mês a mês (planilha "Impostos Analise
 // KMNO"), Ago/25 a Jun/26, comparado à Receita Bruta (Total de
 // Recebimentos = Vendas KMNO).
-const IMPOSTOS_KMNO_MESES = ['ago/25', 'set/25', 'out/25', 'nov/25', 'dez/25', 'jan/26', 'fev/26', 'mar/26', 'abr/26', 'mai/26'];
+const IMPOSTOS_KMNO_MESES = ['ago/25', 'set/25', 'out/25', 'nov/25', 'dez/25', 'jan/26', 'fev/26', 'mar/26', 'abr/26', 'mai/26', 'jun/26', 'jul/26', 'ago/26'];
 const IMPOSTOS_KMNO = {
-  receitaBruta:  [1084592.82, 815321.32, 897148.35, 870048.10, 757407.46, 468550.55, 720089.24, 800679.76, 750762.56, 889612.46],
-  irpj:          [0, 0, 70065.94, 0, 0, 70976.60, 0, 0, 62925.09, 0],
-  csll:          [0, 0, 0, 3092.58, 2758.00, 3043.19, 1408.38, 2648.75, 2005.38, 2412.88],
-  pis:           [3103.35, 3205.57, 4518.09, 4321.11, 4799.37, 4140.32, 2529.46, 4899.63, 4788.72, 4007.46],
-  cofins:        [14323.15, 14794.94, 20852.74, 19943.56, 22150.92, 19109.17, 11674.44, 22613.67, 19817.18, 18495.98],
-  difal:         [7739.38, 10087.00, 19629.93, 15956.78, 16233.40, 8660.58, 9569.70, 26074.37, 19652.26, 25862.80],
-  icms:          [0, 0, 46808.39, 24513.66, 26797.67, 22976.43, 14333.18, 26319.38, 25175.88, 23805.36],
+  // Jun/Jul/Ago 2026 (indices 10-12) ainda NULL de proposito: a formula
+  // presumida usada nas colunas abaixo (aliquota fixa x Receita Bruta)
+  // nao bate com os valores reais da planilha -- confirmado 01/09/2026
+  // que a base de calculo real e mais elaborada (regra trimestral de
+  // IRPJ, deducoes, etc.), so o contador sabe. Nao inventar numero aqui
+  // ate confirmar a formula certa com o Cesar/Lucas.
+  receitaBruta:  [1084592.82, 815321.32, 897148.35, 870048.10, 757407.46, 468550.55, 720089.24, 800679.76, 750762.56, 889612.46, null, null, null],
+  irpj:          [0, 0, 70065.94, 0, 0, 70976.60, 0, 0, 62925.09, 0, null, null, null],
+  csll:          [0, 0, 0, 3092.58, 2758.00, 3043.19, 1408.38, 2648.75, 2005.38, 2412.88, null, null, null],
+  pis:           [3103.35, 3205.57, 4518.09, 4321.11, 4799.37, 4140.32, 2529.46, 4899.63, 4788.72, 4007.46, null, null, null],
+  cofins:        [14323.15, 14794.94, 20852.74, 19943.56, 22150.92, 19109.17, 11674.44, 22613.67, 19817.18, 18495.98, null, null, null],
+  difal:         [7739.38, 10087.00, 19629.93, 15956.78, 16233.40, 8660.58, 9569.70, 26074.37, 19652.26, 25862.80, null, null, null],
+  icms:          [0, 0, 46808.39, 24513.66, 26797.67, 22976.43, 14333.18, 26319.38, 25175.88, 23805.36, null, null, null],
 };
+
+// NOVO (01/09/2026): Simples Nacional (DAS) real de RT e Novah, ao vivo
+// via categoriesCache/payableCache -- match por DESCRICAO da categoria
+// (nao por codigo -- codigos numericos de categoria NAO sao padronizados
+// entre empresas no Omie, confirmado: 2.06.07 = ICMS na KMNO mas = ISS
+// na Novah). Cada empresa tem seu proprio regime -- RT e Novah sao
+// Simples Nacional (paga tudo unificado, sem discriminar IRPJ/CSLL/PIS/
+// COFINS separado como a KMNO, que e Lucro Presumido).
+function getSimplesNacionalDasMensal(empresa) {
+  const porMes = {};
+  if (!categoriesCache || !payableCache) return porMes;
+  const codigosDas = new Set(
+    categoriesCache
+      .filter(c => c._empresa === empresa && decodeHtmlEntities(c.descricao || '').trim().toUpperCase() === 'SIMPLES NACIONAL (DAS)')
+      .map(c => c.codigo)
+  );
+  if (!codigosDas.size) return porMes;
+  payableCache
+    .filter(p => p._empresa === empresa && codigosDas.has(p.codigo_categoria))
+    .forEach(p => {
+      const dataRef = p.data_registro || p.data_emissao;
+      if (!dataRef) return;
+      const key = dayjs(dataRef).format('YYYY-MM');
+      const v = Number(p.valor_documento || 0);
+      porMes[key] = (porMes[key] || 0) + v;
+    });
+  return porMes;
+}
 
 let chartPecasVendidasFaturadas = null;
 function renderAnalisePecasVendidasFaturadas() {
@@ -13786,15 +13867,35 @@ function renderImpostosView() {
   // Tabela detalhe mensal
   const header = document.getElementById('impostosDetalheHeader');
   if (header) header.innerHTML = '<th>Categoria</th>' + IMPOSTOS_KMNO_MESES.map(m => `<th class="num">${m}</th><th class="num total-pct">AV%</th>`).join('');
+  // NOVO (01/09/2026): Simples Nacional (DAS) real de RT e Novah, ao
+  // vivo, tagueado por empresa no proprio rotulo (pedido Lucas). Usa a
+  // MESMA lista de meses da tabela (IMPOSTOS_KMNO_MESES) -- meses sem
+  // dado real mostram "-" (RT/Novah so tem dado ao vivo a partir de
+  // Jun/2026, indices 10-12; meses antigos ficam vazios de proposito,
+  // nao e erro).
+  const dasRtPorMes = getSimplesNacionalDasMensal('RT');
+  const dasNovahPorMes = getSimplesNacionalDasMensal('NOVAH');
+  const chavesMeses = IMPOSTOS_KMNO_MESES.map((_, i) => {
+    // ano/mes real de cada indice: os 10 primeiros sao ago/25..mai/26,
+    // os 3 ultimos jun/jul/ago 26 -- monta a chave YYYY-MM certa.
+    const anos = [2025,2025,2025,2025,2025,2026,2026,2026,2026,2026,2026,2026,2026];
+    const meses = [8,9,10,11,12,1,2,3,4,5,6,7,8];
+    return `${anos[i]}-${String(meses[i]).padStart(2,'0')}`;
+  });
+  const dasRt = chavesMeses.map(k => dasRtPorMes[k] ?? null);
+  const dasNovah = chavesMeses.map(k => dasNovahPorMes[k] ?? null);
+
   const linhas = [
-    ['Receita Bruta', d.receitaBruta],
-    ['IRPJ Presumido (15%)', d.irpj],
-    ['CSLL Presumido (9%)', d.csll],
-    ['PIS Presumido (0,65%)', d.pis],
-    ['COFINS Presumido (3%)', d.cofins],
-    ['Difal (2%)', d.difal],
-    ['ICMS (3%)', d.icms],
-    ['Total de Impostos', totalImpostos],
+    ['Receita Bruta — KMNO', d.receitaBruta],
+    ['IRPJ Presumido (15%) — KMNO', d.irpj],
+    ['CSLL Presumido (9%) — KMNO', d.csll],
+    ['PIS Presumido (0,65%) — KMNO', d.pis],
+    ['COFINS Presumido (3%) — KMNO', d.cofins],
+    ['Difal (2%) — KMNO', d.difal],
+    ['ICMS (3%) — KMNO', d.icms],
+    ['Total de Impostos — KMNO', totalImpostos],
+    ['Simples Nacional (DAS) — RT', dasRt],
+    ['Simples Nacional (DAS) — NOVAH', dasNovah],
   ];
   // AV% — Análise Vertical (pedido reunião 27/07: "revisar AV%, precisa
   // ter em todo painel de informações"). Dado já é um array fixo
@@ -19210,35 +19311,94 @@ const PROVA_REAL_MESES_ORDEM = ['jan', 'fev', 'mar', 'abr', 'mai'];
 // Calculado = Inicial + Entradas − Saídas seja consistente com o rollback.
 // Nome com "PorEmpresa" pra não colidir com a função buildProvaRealMesAoVivo
 // já existente no arquivo (outro propósito, fixa KMNO+RT).
+// NOVO (01/09/2026): helper que soma dash_saldo_bancario_mensal (saldo
+// OFICIAL do Omie no dia 1) pra uma empresa especifica (ou 'TODAS',
+// somando as 3) num mes. Retorna null se nao tiver dado pra esse mes
+// (ex: meses congelados Jan-Mai, que nunca tiveram esse sync rodado).
+function saldoBancarioMensalTotalEmpresa(empresa, mesDayjs) {
+  const empresas = empresa === 'TODAS' ? ['KMNO', 'RT', 'NOVAH'] : [empresa];
+  let total = 0, achou = false;
+  empresas.forEach(emp => {
+    const chave = `${emp}|${mesDayjs.format('YYYY-MM')}`;
+    const mapa = saldoBancarioMensalCache[chave];
+    if (mapa) { achou = true; total += Object.values(mapa).reduce((s, v) => s + Number(v || 0), 0); }
+  });
+  return achou ? total : null;
+}
+
 function buildProvaRealPorEmpresaMesVivo(empresa, mesStart) {
   const mesEndExcl = mesStart.add(1, 'month');
-  const saldoInicial = calcSaldoInicialRealizado(analiseBancosContasCache, dreArvoreCategoriesCache, analiseBancosMovimentosCache, empresa, mesStart);
-  const saldoReal = calcSaldoInicialRealizado(analiseBancosContasCache, dreArvoreCategoriesCache, analiseBancosMovimentosCache, empresa, mesEndExcl);
-  const catByKey = buildCatByEmpresaCodigo(dreArvoreCategoriesCache || []);
-  // FIX 31/08/2026: faltava restringir Entradas/Saídas às contas de fluxo
-  // de caixa real (mesmo filtro que calcSaldoInicialRealizado já aplica
-  // pro Saldo Inicial/Real) — sem isso, movimentos de contas virtuais
-  // (ex: fatura de cartão de crédito, fluxo_caixa=false) entravam em
-  // Entradas/Saídas mas ficavam fora do rollback bancário, causando a
-  // "Diferença (Real − Calculado)" do card Prova Real (confirmado: RT
-  // Junho, 7 movimentos de 2 cartões de crédito, efeito exato R$14.899,05
-  // = a diferença mostrada na tela).
-  const contasCaixa = contasFluxoCaixa(analiseBancosContasCache, empresa);
-  const codsCaixaValidos = new Set(contasCaixa.map(c => c.n_cod_cc));
+  // FIX 01/09/2026: Saldo Inicial/Real trocado do rollback antigo
+  // (calcSaldoInicialRealizado -- parte do saldo_atual de HOJE e desconta
+  // todo movimento desde o mes ate hoje via dash_financial_movements;
+  // qualquer erro/duplicata nesse periodo inteiro se acumula e some pro
+  // resultado) para dash_saldo_bancario_mensal -- o MESMO saldo oficial
+  // do Omie (ListarExtrato, dia 1 do mes) ja usado e validado 100% no
+  // card "Saldo CAIXA"/Bancos (ver saldoBancarioMensalCombinado). Mantido
+  // o rollback antigo como FALLBACK só pros meses congelados (Jan-Mai)
+  // que nunca tiveram esse sync rodado.
+  const saldoInicial = saldoBancarioMensalTotalEmpresa(empresa, mesStart)
+    ?? calcSaldoInicialRealizado(analiseBancosContasCache, dreArvoreCategoriesCache, analiseBancosMovimentosCache, empresa, mesStart);
+  const saldoReal = saldoBancarioMensalTotalEmpresa(empresa, mesEndExcl)
+    ?? calcSaldoInicialRealizado(analiseBancosContasCache, dreArvoreCategoriesCache, analiseBancosMovimentosCache, empresa, mesEndExcl);
+  // FIX 01/09/2026 (pedido Lucas, tentativa com getSaidasEntradaCaixaMes
+  // REVERTIDA no mesmo dia): a versão categorizada (dash_financial_movements)
+  // não bate com o nativo (testado: RT Jun entrada R$93.972 vs nativo
+  // R$66.054,81) -- fonte categorizada tem seu próprio problema de dado,
+  // não investigado ainda. Volta pro extrato bancário BRUTO
+  // (dash_current_account_transactions, mesmo filtro fluxo_caixa=true já
+  // usado em Saldo Inicial/Real acima) -- JÁ CONFIRMADO bater exato com o
+  // nativo pra RT Jun/Jul após limpar 4 lançamentos órfãos em 01/09/2026
+  // (ver resolvido-prova-real-rt-junho-orfaos-010926 no taco).
+  const contasCaixaProva = contasFluxoCaixa(analiseBancosContasCache, empresa);
+  const codsCaixaValidosProva = new Set(contasCaixaProva.map(c => c.n_cod_cc));
   let entradas = 0, saidas = 0;
-  (analiseBancosMovimentosCache || []).forEach(m => {
-    if (empresa !== 'TODAS' && m._empresa !== empresa) return;
-    if (!m.dt_pagamento) return;
-    if (m.cod_cc != null && !codsCaixaValidos.has(m.cod_cc)) return;
-    const d = dayjs(m.dt_pagamento);
+  // FIX 01/09/2026 (pedido Lucas): exclui transferência entre contas
+  // próprias (origem TRAR/TRAP) de Entradas/Saídas -- MAS só quando as
+  // DUAS pontas da transferência (achadas via cod_agrup, que liga o par)
+  // estão em conta real (fluxo_caixa=true). Achado real: 2 transferências
+  // de Sicredi/Banco do Brasil (conta real) pra "CARTAO 16"/"Cartão de
+  // Crédito Sicredi 10" (contas de cartão, fluxo_caixa=false) são
+  // pagamento de fatura -- dinheiro saiu de verdade da conta real, não é
+  // "conta pagando ela mesma". Excluir isso também (sem checar a outra
+  // ponta) subtraía R$10.145,33 de Saída que deveria continuar contando
+  // (confirmado: sem esse fix, Saídas ficava R$66.974,72 em vez dos
+  // R$77.120,05 do nativo -- diferença exata de R$10.145,33).
+  const agrupContas = {};
+  (provaRealExtratoCache || []).forEach(t => {
+    if (empresa !== 'TODAS' && t._empresa !== empresa) return;
+    if (t.cod_agrup == null) return;
+    if (!agrupContas[t.cod_agrup]) agrupContas[t.cod_agrup] = new Set();
+    agrupContas[t.cod_agrup].add(t.cod_cc);
+  });
+  // REVERTIDO 01/09/2026 (pedido Lucas): tratamento especial de contas
+  // de investimento (Aplicação/BTG/Cotas Sicredi) foi tentado e depois
+  // revertido no mesmo dia -- Lucas quer o tratamento CORRETO (excluir
+  // do Resumo/Prova Real, mas mostrar o saldo/rendimento em local
+  // próprio) só depois, com calma ("outra fita que vamos polir ainda").
+  // Por ora, essas contas voltam a ser fluxo_caixa=true simples (tratadas
+  // como conta operacional normal, sem exclusão especial) -- é o estado
+  // já validado como 100% correto antes dessa tentativa. NÃO reintroduzir
+  // CONTAS_INVESTIMENTO_COD_CC sem alinhar de novo com o Lucas o design
+  // completo (onde exibir separado, o que conta como "banco" vs
+  // "investimento/rendimento"). Ver pendencia-tratamento-contas-investimento
+  // no taco do projeto.
+  const transferenciaTotalmenteInterna = (t) => {
+    if (t.origem !== 'TRAR' && t.origem !== 'TRAP') return false;
+    const contasDoGrupo = agrupContas[t.cod_agrup];
+    if (!contasDoGrupo) return false;
+    return Array.from(contasDoGrupo).every(cc => codsCaixaValidosProva.has(cc));
+  };
+  (provaRealExtratoCache || []).forEach(t => {
+    if (empresa !== 'TODAS' && t._empresa !== empresa) return;
+    if (!t.dt_lanc) return;
+    if (t.cod_cc != null && !codsCaixaValidosProva.has(t.cod_cc)) return;
+    if (transferenciaTotalmenteInterna(t)) return;
+    const d = dayjs(t.dt_lanc);
     if (d.isBefore(mesStart) || !d.isBefore(mesEndExcl)) return;
-    if (m.cod_categoria) {
-      const cat = catByKey[`${m._empresa}|${m.cod_categoria}`];
-      if (isExcludedFromDfc(cat)) return;
-    }
-    const v = Number(m.val_pago || m.val_liquido || 0);
-    if (m.natureza === 'R') entradas += v;
-    else if (m.natureza === 'P') saidas += v;
+    const v = Number(t.valor_lanc || 0);
+    if (t.natureza === 'R') entradas += v;
+    else if (t.natureza === 'P') saidas += v;
   });
   const saldoCalculado = saldoInicial + entradas - saidas;
   const diferenca = saldoReal - saldoCalculado;
