@@ -5558,6 +5558,31 @@ function calcSaldoInicialRealizado(contas, categories, cashMovements, empresa, m
   return saldoAtualTotal - movimentosDesdeInicio;
 }
 
+// Mesmo rollback de calcSaldoInicialRealizado, mas usando o EXTRATO BRUTO
+// (provaRealExtratoCache) em vez de dash_financial_movements (categorizado) —
+// evita depender de dash_saldo_bancario_mensal (tabela separada, sync
+// próprio que pode ficar desatualizado) e usa a MESMA fonte já validada
+// pra Entradas/Saídas da Prova Real (fix 02/09/2026, pedido Lucas: "é só
+// fazer saldo inicial + entrada - saída com os dados que já tem").
+function calcSaldoRollbackExtratoBruto(contas, extrato, empresa, dataAlvo) {
+  const contasCaixa = contasFluxoCaixa(contas, empresa);
+  const saldoAtualTotal = contasCaixa.reduce((s, c) => s + Number(c.saldo_atual || 0), 0);
+  const codsCaixaValidos = new Set(contasCaixa.map(c => c.n_cod_cc));
+  const amanha = dayjs().add(1, 'day');
+  let movimentosDesdeData = 0;
+  (extrato || []).forEach(t => {
+    if (empresa !== 'TODAS' && t._empresa !== empresa) return;
+    if (!t.dt_lanc) return;
+    if (t.cod_cc != null && !codsCaixaValidos.has(t.cod_cc)) return;
+    const d = dayjs(t.dt_lanc);
+    if (d.isBefore(dataAlvo) || !d.isBefore(amanha)) return;
+    const v = Number(t.valor_lanc || 0);
+    if (t.natureza === 'R') movimentosDesdeData += v;
+    else if (t.natureza === 'P') movimentosDesdeData -= v;
+  });
+  return saldoAtualTotal - movimentosDesdeData;
+}
+
 function calcLimiteCredito(contas, empresa) {
   return contasFluxoCaixa(contas, empresa).reduce((s, c) => s + Number(c.valor_limite || 0), 0);
 }
@@ -19480,10 +19505,16 @@ function buildProvaRealPorEmpresaMesVivo(empresa, mesStart) {
   // card "Saldo CAIXA"/Bancos (ver saldoBancarioMensalCombinado). Mantido
   // o rollback antigo como FALLBACK só pros meses congelados (Jan-Mai)
   // que nunca tiveram esse sync rodado.
-  const saldoInicial = saldoBancarioMensalTotalEmpresa(empresa, mesStart)
-    ?? calcSaldoInicialRealizado(analiseBancosContasCache, dreArvoreCategoriesCache, analiseBancosMovimentosCache, empresa, mesStart);
-  const saldoReal = saldoBancarioMensalTotalEmpresa(empresa, mesEndExcl)
-    ?? calcSaldoInicialRealizado(analiseBancosContasCache, dreArvoreCategoriesCache, analiseBancosMovimentosCache, empresa, mesEndExcl);
+  // FIX 02/09/2026 (pedido Lucas): Saldo Inicial/Real agora calculado por
+  // ROLLBACK direto do extrato bruto já corrigido (mesma fonte de
+  // Entradas/Saídas abaixo), em vez de depender de dash_saldo_bancario_mensal
+  // (tabela separada, sync próprio -- ficou desatualizada depois do fix de
+  // fluxo_caixa de hoje e não refletia as contas Sicredi/BB da RT). Fallback
+  // pra tabela antiga mantido só caso o extrato bruto não tenha carregado.
+  const saldoInicial = calcSaldoRollbackExtratoBruto(analiseBancosContasCache, provaRealExtratoCache, empresa, mesStart)
+    ?? saldoBancarioMensalTotalEmpresa(empresa, mesStart);
+  const saldoReal = calcSaldoRollbackExtratoBruto(analiseBancosContasCache, provaRealExtratoCache, empresa, mesEndExcl)
+    ?? saldoBancarioMensalTotalEmpresa(empresa, mesEndExcl);
   // FIX 01/09/2026 (pedido Lucas, tentativa com getSaidasEntradaCaixaMes
   // REVERTIDA no mesmo dia): a versão categorizada (dash_financial_movements)
   // não bate com o nativo (testado: RT Jun entrada R$93.972 vs nativo
@@ -19571,7 +19602,15 @@ function buildProvaRealPorEmpresaMesVivo(empresa, mesStart) {
     if (t.natureza === 'R') entradas += v;
     else if (t.natureza === 'P') saidas += v;
   });
-  const saldoCalculado = saldoInicial + entradas - saidas - ajusteInvestimento;
+  // FIX 02/09/2026: ajusteInvestimento REMOVIDO daqui -- era necessário só
+  // quando saldoInicial vinha de dash_saldo_bancario_mensal (que incluía
+  // contas de investimento no total). Agora que saldoInicial/saldoReal vêm
+  // por rollback direto do extrato via contasFluxoCaixa (que já EXCLUI
+  // COTAS SICREDI/investimento por não estarem nessa lista), somar
+  // ajusteInvestimento aqui duplicava a exclusão e gerava resíduo de
+  // R$500/R$100/etc (o valor exato das contas de investimento movimentadas
+  // no mês) -- confirmado no teste real RT Jun/Jul.
+  const saldoCalculado = saldoInicial + entradas - saidas;
   const diferenca = saldoReal - saldoCalculado;
   return { saldoInicial, entradas, saidas, saldoCalculado, saldoReal, diferenca };
 }
