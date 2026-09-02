@@ -1177,6 +1177,17 @@
   .linha-pai-aberta td.dre-tbl-sticky {
     background: #9DC1B3 !important;
   }
+  /* FIX 02/09/2026: MESMO bug de acima (10/08), mas na tabela "Prova
+     Real" (e outras que usam .fin-tbl-sticky-col em vez de
+     .dre-tbl-sticky) -- a correção anterior só cobriu .dre-tbl-sticky,
+     ficou faltando essa classe. Reportado: "linhas sobem em cima uma
+     da outra" ao expandir + rolar horizontalmente. */
+  .fin-tbl-sticky-col .linha-grupo-aberta td:first-child {
+    background: #C6D6CD !important;
+  }
+  .fin-tbl-sticky-col .linha-pai-aberta td:first-child {
+    background: #9DC1B3 !important;
+  }
   /* Pedido 29/07: recuo consistente entre linha pai (com ícone +/-, sem
      ícone/destaque) e linha filho, nas árvores "Resumo por Empresa" e
      "Resumo (Grupo, R$) — Card de Teste" (toggleResumoEmpresaConta) —
@@ -2449,6 +2460,9 @@
   .notes-panel { width: 280px; }
 }
 </style>
+  <!-- SheetJS (xlsx) via CDN -- usado só pra exportar o card "Resumo
+       (Grupo, R$)" pra Excel (pedido 02/09/2026). -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -3116,10 +3130,17 @@
         <div class="bloco-head"><div class="bloco-titulo">Resumo (Grupo, R$)</div></div>
         <div class="bloco-body">
           <div class="dre-tbl-wrap">
-            <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col fin-tbl-resumo-grupo-mint">
+            <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col fin-tbl-resumo-grupo-mint" id="tabelaResumoGrupoExport">
               <tr id="grupoResumoDetalhadoHeader"><th>Descrição</th></tr>
               <tbody id="grupoResumoDetalhadoBody"></tbody>
             </table>
+          </div>
+          <!-- NOVO (02/09/2026, pedido Lucas): exportar Excel/PDF, só
+               esse card por enquanto. PDF = print simples (sem lib
+               externa, "planilha impressa"). Excel = SheetJS via CDN. -->
+          <div style="margin-top:10px;display:flex;gap:8px;">
+            <button onclick="exportarTabelaExcel('tabelaResumoGrupoExport', 'resumo-grupo')" style="font-size:12px;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--navy-2);color:var(--bone);cursor:pointer;">📊 Exportar Excel</button>
+            <button onclick="exportarTabelaPDF('tabelaResumoGrupoExport', 'Resumo (Grupo, R$)')" style="font-size:12px;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--navy-2);color:var(--bone);cursor:pointer;">📄 Exportar PDF</button>
           </div>
         </div>
       </div>
@@ -3223,11 +3244,11 @@
            da Prova Real por Empresa. -->
       <div class="chart-card-title" style="margin-top:18px;">Análise Caixa Bancos no Período</div>
       <div class="grupo-dfc-cards">
-        <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Saldo Bancos em 01.01.2026</div><div class="grupo-dfc-card-val" id="resumoCapitalSaldoInicio">R$ 0</div></div>
+        <div class="grupo-dfc-card"><div class="grupo-dfc-card-label" id="resumoCapitalSaldoInicioLabel">Saldo Bancos em 01.01.2026</div><div class="grupo-dfc-card-val" id="resumoCapitalSaldoInicio">R$ 0</div></div>
         <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Saldo Bancos Último Dia do Mês Anterior</div><div class="grupo-dfc-card-val" id="resumoCapitalSaldoFim">R$ 0</div></div>
         <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Variação no Período</div><div class="grupo-dfc-card-val" id="resumoCapitalSaldoDiff">R$ 0</div></div>
       </div>
-      <div class="grupo-dfc-cards">
+      <div class="grupo-dfc-cards" id="grupoCartoesRecebeCards">
         <div class="grupo-dfc-card">
           <div class="grupo-dfc-card-label">Saldo Cartões a Receber em 01.01.2026</div>
           <div class="grupo-dfc-card-val" id="resumoCapitalCartoesInicio">R$ -----</div>
@@ -6240,6 +6261,63 @@ function fmtDreNativoValor(v) {
 // classe .linha-grupo-aberta abaixo). Função separada da
 // toggleDreNativoConta (compartilhada com as árvores Tipo/Grupo/Conta)
 // de propósito — pedido explícito era só nesta tabela, não nas outras.
+// NOVO (02/09/2026, pedido Lucas): exportar tabela pra Excel/PDF -- só
+// o card "Resumo (Grupo, R$)" por enquanto. Genérico o suficiente pra
+// reaproveitar em outros cards depois (recebe o id da <table> e um nome
+// de arquivo).
+function exportarTabelaExcel(tableId, nomeArquivo) {
+  const tabela = document.getElementById(tableId);
+  if (!tabela || typeof XLSX === 'undefined') {
+    alert('Não foi possível exportar (tabela ou biblioteca não carregada).');
+    return;
+  }
+  const wb = XLSX.utils.table_to_book(tabela, { sheet: 'Resumo' });
+  const hoje = dayjs().format('YYYY-MM-DD');
+  XLSX.writeFile(wb, `${nomeArquivo}-${hoje}.xlsx`);
+}
+
+// PDF simples (pedido Lucas: "planilha impressa", sem lib externa) --
+// abre uma janela nova só com a tabela, formatada básico, e chama
+// window.print() -- o usuário escolhe "Salvar como PDF" no diálogo de
+// impressão do navegador. Sem dependência de jsPDF ou similar.
+function exportarTabelaPDF(tableId, titulo) {
+  const tabela = document.getElementById(tableId);
+  if (!tabela) {
+    alert('Não foi possível exportar (tabela não encontrada).');
+    return;
+  }
+  const janela = window.open('', '_blank');
+  if (!janela) {
+    alert('O navegador bloqueou a janela de impressão. Permita pop-ups pra esse site e tente de novo.');
+    return;
+  }
+  const hoje = dayjs().format('DD/MM/YYYY');
+  janela.document.write(`
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>${titulo}</title>
+      <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        h1 { font-size: 16px; margin-bottom: 4px; }
+        .data-export { font-size: 11px; color: #666; margin-bottom: 16px; }
+        table { border-collapse: collapse; width: 100%; font-size: 11px; }
+        th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: right; }
+        th:first-child, td:first-child { text-align: left; }
+        th { background: #eee; }
+      </style>
+    </head>
+    <body>
+      <h1>${titulo}</h1>
+      <div class="data-export">Exportado em ${hoje}</div>
+      ${tabela.outerHTML}
+    </body>
+    </html>
+  `);
+  janela.document.close();
+  janela.onload = () => { janela.print(); };
+}
+
 function toggleResumoEmpresaConta(id) {
   const linhas = document.querySelectorAll(`tr[data-grupo-conta="${id}"]`);
   const pai = document.getElementById('pai-' + id);
@@ -6255,6 +6333,20 @@ function toggleResumoEmpresaConta(id) {
   // ficam com o verde-claro de linha-grupo-aberta.
   if (pai) pai.classList.toggle('linha-pai-aberta', abrindo);
   if (icon) icon.textContent = abrindo ? '−' : '+';
+  // FIX 02/09/2026 (pedido Lucas: linhas sobrepostas ao expandir/rolar):
+  // tabelas com "position: sticky" na 1ª coluna (fin-tbl-sticky-col) às
+  // vezes não recalculam a posição a tempo quando uma linha muda de
+  // display:none pra table-row dinamicamente -- o navegador só corrige
+  // sozinho depois de um scroll/resize. Força esse recálculo na mão,
+  // sem precisar que o usuário role a tela.
+  const wrap = (linhas[0].closest('.dre-tbl-wrap')) || (pai && pai.closest('.dre-tbl-wrap'));
+  if (wrap) {
+    requestAnimationFrame(() => {
+      const atual = wrap.scrollLeft;
+      wrap.scrollLeft = atual + 1;
+      wrap.scrollLeft = atual;
+    });
+  }
 }
 
 function toggleDreNativoConta(id) {
@@ -8235,6 +8327,10 @@ const DRE_ARVORE_BLOCOS = {
         {
           "nome": "Levits BPO",
           "natureza": "P"
+        },
+        {
+          "nome": "Manutenção de Imobilizado",
+          "natureza": "P"
         }
       ]
     },
@@ -8299,10 +8395,6 @@ const DRE_ARVORE_BLOCOS = {
       "itens": [
         {
           "nome": "Máquinas e Equipamentos",
-          "natureza": "P"
-        },
-        {
-          "nome": "Manutenção de Imobilizado",
           "natureza": "P"
         }
       ]
@@ -15730,6 +15822,14 @@ function renderCartoesReceberCards() {
   // Grupo") — respeita a seleção de empresa do topo. Com KMNO na seleção
   // (sozinha ou com RT/Novah), mostra o valor; sem KMNO, "-----".
   const kmnoSelecionada = !selectedCompanyKeys || !selectedCompanyKeys.length || selectedCompanyKeys.includes('KMNO');
+  // NOVO (02/09/2026, pedido Lucas): esconder o card INTEIRO (não só o
+  // valor) quando KMNO não está na seleção -- ex: RT sozinha selecionada.
+  // A RT NÃO TEM contas do tipo cartão/cartões a receber cadastradas
+  // (esse card é dado fixo específico da KMNO) -- não faz sentido
+  // aparecer vazio/com traço quando se está olhando a RT (ou qualquer
+  // seleção sem KMNO).
+  const elGrupoCartoes = document.getElementById('grupoCartoesRecebeCards');
+  if (elGrupoCartoes) elGrupoCartoes.style.display = kmnoSelecionada ? '' : 'none';
   const inicio = (kmnoSelecionada && cartoesReceberCache && cartoesReceberCache.inicio) ? Number(cartoesReceberCache.inicio.valor) : null;
   const fim = (kmnoSelecionada && cartoesReceberCache && cartoesReceberCache.fim) ? Number(cartoesReceberCache.fim.valor) : null;
   elInicio.textContent = inicio === null ? 'R$ -----' : fmtBRL(inicio);
@@ -15893,29 +15993,41 @@ function renderResumoCapital(monthStart, monthEnd) {
   //   - NOVAH(+RT) → mostra só NOVAH
   //   - KMNO+NOVAH(+RT) → soma KMNO+NOVAH
   const empresasSelResumoCapital = (selectedCompanyKeys && selectedCompanyKeys.length)
-    ? selectedCompanyKeys.filter(k => k === 'KMNO' || k === 'NOVAH')
-    : ['KMNO', 'NOVAH']; // nada selecionado = todas por padrão, mesmo comportamento de sempre
+    ? selectedCompanyKeys.filter(k => k === 'KMNO' || k === 'NOVAH' || k === 'RT')
+    : ['KMNO', 'NOVAH', 'RT']; // nada selecionado = todas por padrão
 
   const elSaldoFimEl = document.getElementById('resumoCapitalSaldoFim');
   const elSaldoDiffEl = document.getElementById('resumoCapitalSaldoDiff');
 
   if (!empresasSelResumoCapital.length) {
-    // Só RT selecionada (sozinha) — nenhuma fonte disponível.
     elSaldoInicio.textContent = 'R$ -----';
     if (elSaldoFimEl) elSaldoFimEl.textContent = 'R$ -----';
     if (elSaldoDiffEl) elSaldoDiffEl.textContent = 'R$ -----';
   } else {
-    // Saldo Bancos em 01.01.2026: valores fixos, por empresa. FIX 30/07
-    // (2ª correção) — PROVA_REAL_POR_EMPRESA[NOVAH].jan.saldoInicial
-    // estava defasado 1 mês (campo de fórmula do DFC, não o saldo
-    // bancário real de Jan) e causava soma errada (757.370 em vez de
-    // 781.639,33 = 746.008,60 KMNO + 35.630,73 NOVAH). Usa direto os
-    // valores já validados/confirmados por Lucas (mesmos de
-    // BANCOS_SALDO_INICIO_MES.valores, índice 0 = Jan/2026, somados por
-    // conta — sem depender de empresaDoBanco, que tinha o bug do RT).
-    const SALDO_INICIO_JAN_POR_EMPRESA = { KMNO: 746008.60, NOVAH: 35630.73 };
+    // Saldo Bancos em 01.01.2026: valores fixos, por empresa (KMNO/NOVAH,
+    // congelado desde Jan/2026). FIX 30/07 (2ª correção) —
+    // PROVA_REAL_POR_EMPRESA[NOVAH].jan.saldoInicial estava defasado 1 mês
+    // e causava soma errada. Usa direto os valores já validados/
+    // confirmados por Lucas.
+    //
+    // NOVO (02/09/2026, pedido Lucas): RT não tem dado antes de Junho/2026
+    // (não existia frozen pra ela) -- card ficava sempre "-----" quando RT
+    // era selecionada. Pra RT, "saldo início" passa a ser o saldo real de
+    // 01/06/2026 (R$14.475,12, já validado hoje via dash_saldo_bancario_
+    // mensal/Prova Real), tratado como o "início" de referência dela --
+    // não é Jan, é o início real dos dados que ela tem.
+    const SALDO_INICIO_JAN_POR_EMPRESA = { KMNO: 746008.60, NOVAH: 35630.73, RT: 14475.12 };
     const saldoInicio = empresasSelResumoCapital.reduce((soma, emp) =>
       soma + (SALDO_INICIO_JAN_POR_EMPRESA[emp] || 0), 0);
+
+    // NOVO (02/09/2026, pedido Lucas): quando só RT está selecionada, o
+    // label do card precisa dizer "01.06.2026" (não "01.01.2026") --
+    // é o único mês que ela tem dado real pra essa referência.
+    const elSaldoInicioLabel = document.getElementById('resumoCapitalSaldoInicioLabel');
+    if (elSaldoInicioLabel) {
+      const soRT = empresasSelResumoCapital.length === 1 && empresasSelResumoCapital[0] === 'RT';
+      elSaldoInicioLabel.textContent = soRT ? 'Saldo Bancos em 01.06.2026' : 'Saldo Bancos em 01.01.2026';
+    }
 
     // Saldo Bancos Último Dia do Mês Anterior: passa a seguir o seletor
     // De/Até do topo (confirmado com Lucas 30/07: "deve depender do
@@ -15930,10 +16042,19 @@ function renderResumoCapital(monthStart, monthEnd) {
     const mesAntesLive = !mesAntes.isBefore(EXCEL_CONGELADO_ATE);
     const mesAntesChave = mesAntesLive ? null : PROVA_REAL_MESES_ORDEM[mesAntes.month()]; // 'jan'..'mai', ou undefined se fora do congelado
 
+    // FIX 02/09/2026 (pedido Lucas: "valor não bate com a tabela Bancos
+    // Fim do Mês"): 2 bugs juntos aqui -- (1) usava `monthEnd` (fim do
+    // PERÍODO inteiro selecionado) em vez de `mesAntes.add(1,'month')`
+    // (fim do MÊS ANTERIOR de verdade, que é o que esse card promete
+    // mostrar); (2) usava o rollback antigo (calcSaldoInicialRealizado,
+    // já sabidamente impreciso) em vez do mesmo saldoBancarioMensal
+    // (dash_saldo_bancario_mensal) que a tabela "Bancos Fim do Mês" já
+    // usa corretamente. Corrigido pra usar a mesma fonte + mês certo.
+    const fimMesAntes = mesAntes.add(1, 'month');
     let saldoFim = 0, saldoFimIndisponivel = false;
     empresasSelResumoCapital.forEach(emp => {
       if (mesAntesLive) {
-        saldoFim += calcSaldoInicialRealizado(analiseBancosContasCache, dreArvoreCategoriesCache, analiseBancosMovimentosCache, emp, monthEnd);
+        saldoFim += saldoBancarioMensalTotalEmpresa(emp, fimMesAntes) || 0;
         return;
       }
       const dadoMes = mesAntesChave && PROVA_REAL_POR_EMPRESA[emp] && PROVA_REAL_POR_EMPRESA[emp][mesAntesChave];
@@ -15983,6 +16104,14 @@ function renderResumoCapital(monthStart, monthEnd) {
   const empresasSelCapexRefis = (selectedCompanyKeys && selectedCompanyKeys.length)
     ? selectedCompanyKeys
     : ['KMNO', 'NOVAH', 'RT'];
+  // FIX 02/09/2026 (pedido Lucas: "esse card calcula errado, deve usar o
+  // MESMO valor que o card Resumo já calcula certo pras linhas Capex/
+  // Outros(Refis)"): meses AO VIVO trocam a lista fixa CAPEX_CODIGOS/
+  // REFIS_CODIGOS_POR_EMPRESA (podia divergir da classificação real do
+  // Omie) por buildResumoCategoriasMes -- a MESMA engine que já alimenta
+  // o card "Resumo (Grupo, R$)" (capex = bloco "investimentos", refis =
+  // bloco "outras_saidas"). Congelado (Jan-Mai) continua igual --
+  // já vem do mesmo Excel usado pelo Resumo, sem divergência ali.
   let capex = 0, refis = 0, refisTemAlgumaQualificada = false, capexTemAlgumaQualificada = false;
   let cursorCR = monthStart.startOf('month');
   const fimCR = monthEnd.subtract(1, 'month').startOf('month'); // monthEnd é exclusivo — sem o subtract, incluía 1 mês a mais
@@ -16000,17 +16129,11 @@ function renderResumoCapital(monthStart, monthEnd) {
         }
       });
     } else {
-      const inicioMes = cursorCR, fimMes = cursorCR.endOf('month');
-      (financialMovementsCache || []).forEach(mv => {
-        if (!empresasSelCapexRefis.includes(mv._empresa)) return;
-        if (mv.natureza !== 'P' || !mv.dt_pagamento || !mv.cod_categoria) return;
-        const d = dayjs(mv.dt_pagamento);
-        if (d.isBefore(inicioMes) || d.isAfter(fimMes)) return;
-        const v = Number(mv.val_pago || mv.val_liquido || 0);
-        if (!v) return;
-        if (CAPEX_CODIGOS.includes(mv.cod_categoria)) capex += v;
-        const refisCodigos = REFIS_CODIGOS_POR_EMPRESA[mv._empresa] || [];
-        if (refisCodigos.includes(mv.cod_categoria)) refis += v;
+      const fimMesCR = cursorCR.add(1, 'month');
+      empresasSelCapexRefis.forEach(emp => {
+        const dados = buildResumoCategoriasMes(emp, categoriesCache, financialMovementsCache, cursorCR, fimMesCR, 'caixa', contasCorrentesCache);
+        if (empresaTemCapex(emp, cursorCR)) capex += Object.values(dados.capex || {}).reduce((s, v) => s + v, 0);
+        if (empresaTemRefis(emp, cursorCR)) refis += Object.values(dados.refis || {}).reduce((s, v) => s + v, 0);
       });
     }
     cursorCR = cursorCR.add(1, 'month');
@@ -19315,13 +19438,33 @@ const PROVA_REAL_MESES_ORDEM = ['jan', 'fev', 'mar', 'abr', 'mai'];
 // OFICIAL do Omie no dia 1) pra uma empresa especifica (ou 'TODAS',
 // somando as 3) num mes. Retorna null se nao tiver dado pra esse mes
 // (ex: meses congelados Jan-Mai, que nunca tiveram esse sync rodado).
+// NOVO (02/09/2026, pedido Lucas "faz como tá no Omie"): contas de
+// investimento (Aplicação Sicredi, BTG, Cotas Sicredi) NÃO entram no
+// "Saldo Inicial Realizado" nativo do Omie -- confirmado comparando o
+// relatório nativo (achado real: KMNO Agosto tinha R$101.200 de
+// diferença = exatamente a Aplicação Sicredi R$100.000 + COTAS SICREDI
+// R$1.200 que estávamos incluindo por engano). Essas contas continuam
+// aparecendo na tabela detalhada "Bancos" (fluxo_caixa=true, pedido
+// anterior do Lucas), só o TOTAL usado pra comparar com o nativo
+// (Prova Real) exclui elas -- igual o Omie faz.
+const LABELS_INVESTIMENTO_EXCLUIR_DO_TOTAL = [
+  'Aplicação Sicredi', 'BTG Pactual', 'COTAS SICREDI',
+  'Cotas Sicredi', 'Sicredi- Integralização', 'Sicredi - Aplicação',
+];
 function saldoBancarioMensalTotalEmpresa(empresa, mesDayjs) {
   const empresas = empresa === 'TODAS' ? ['KMNO', 'RT', 'NOVAH'] : [empresa];
   let total = 0, achou = false;
   empresas.forEach(emp => {
     const chave = `${emp}|${mesDayjs.format('YYYY-MM')}`;
     const mapa = saldoBancarioMensalCache[chave];
-    if (mapa) { achou = true; total += Object.values(mapa).reduce((s, v) => s + Number(v || 0), 0); }
+    if (mapa) {
+      achou = true;
+      Object.entries(mapa).forEach(([label, v]) => {
+        const nomeBase = label.replace(/ \([A-Z]+\)$/, '');
+        if (LABELS_INVESTIMENTO_EXCLUIR_DO_TOTAL.includes(nomeBase)) return;
+        total += Number(v || 0);
+      });
+    }
   });
   return achou ? total : null;
 }
@@ -19371,36 +19514,64 @@ function buildProvaRealPorEmpresaMesVivo(empresa, mesStart) {
     if (!agrupContas[t.cod_agrup]) agrupContas[t.cod_agrup] = new Set();
     agrupContas[t.cod_agrup].add(t.cod_cc);
   });
-  // REVERTIDO 01/09/2026 (pedido Lucas): tratamento especial de contas
-  // de investimento (Aplicação/BTG/Cotas Sicredi) foi tentado e depois
-  // revertido no mesmo dia -- Lucas quer o tratamento CORRETO (excluir
-  // do Resumo/Prova Real, mas mostrar o saldo/rendimento em local
-  // próprio) só depois, com calma ("outra fita que vamos polir ainda").
-  // Por ora, essas contas voltam a ser fluxo_caixa=true simples (tratadas
-  // como conta operacional normal, sem exclusão especial) -- é o estado
-  // já validado como 100% correto antes dessa tentativa. NÃO reintroduzir
-  // CONTAS_INVESTIMENTO_COD_CC sem alinhar de novo com o Lucas o design
-  // completo (onde exibir separado, o que conta como "banco" vs
-  // "investimento/rendimento"). Ver pendencia-tratamento-contas-investimento
-  // no taco do projeto.
+  // NOVO (01/09/2026, versão 2 -- pedido Lucas: contas de investimento
+  // não devem contar no Resumo/Prova Real, só aparecer no "Saldo de
+  // Bancos"). Diferente da tentativa anterior (que mudava fluxo_caixa=
+  // false e quebrava o sync de saldo mensal): aqui as contas continuam
+  // fluxo_caixa=true no banco (sem mudar dado nenhum, "Saldo de Bancos"
+  // e Saldo Inicial/Real da Prova Real continuam incluindo elas
+  // normalmente, sem retrabalho). Só ADICIONA uma lista extra de contas
+  // de investimento que, quando ambas as pontas de uma transferência
+  // (TRAR/TRAP) caem nela + em conta operacional normal, conta como
+  // transferência "interna" (não infla Entrada/Saída do Resumo/DFC).
+  const CONTAS_INVESTIMENTO_COD_CC = new Set([
+    10520526427, 10470873923, 10493053062, // KMNO: Aplicação Sicredi, BTG Pactual, COTAS SICREDI
+    3115532551, 3081313100,                // RT: COTAS SICREDI, Sicredi- Integralização
+    2060129887, 2069380606,                // NOVAH: Cotas Sicredi, Sicredi - Aplicação
+  ]);
   const transferenciaTotalmenteInterna = (t) => {
     if (t.origem !== 'TRAR' && t.origem !== 'TRAP') return false;
     const contasDoGrupo = agrupContas[t.cod_agrup];
     if (!contasDoGrupo) return false;
-    return Array.from(contasDoGrupo).every(cc => codsCaixaValidosProva.has(cc));
+    return Array.from(contasDoGrupo).every(cc => codsCaixaValidosProva.has(cc) || CONTAS_INVESTIMENTO_COD_CC.has(cc));
   };
+  // NOVO (02/09/2026, pedido Lucas "faz como tá no Omie"): Saldo Inicial/
+  // Real agora EXCLUI o saldo das contas de investimento (ver
+  // LABELS_INVESTIMENTO_EXCLUIR_DO_TOTAL) -- pra isso fechar
+  // matematicamente, qualquer dinheiro que SAIU do caixa operacional
+  // pra investimento no período (líquido) precisa ser descontado do
+  // Saldo Calculado também -- mesmo raciocínio do "Transferências e
+  // Ajustes de Saldo" que o nativo do Omie usa (confirmado: sem isso,
+  // sobra um buraco de R$100.000 exato em Ago/KMNO = a Aplicação
+  // Sicredi). NÃO vira linha visível na tabela (Lucas pediu pra não
+  // mostrar) -- só entra por dentro no saldoCalculado.
+  let ajusteInvestimento = 0;
   (provaRealExtratoCache || []).forEach(t => {
     if (empresa !== 'TODAS' && t._empresa !== empresa) return;
     if (!t.dt_lanc) return;
     if (t.cod_cc != null && !codsCaixaValidosProva.has(t.cod_cc)) return;
-    if (transferenciaTotalmenteInterna(t)) return;
     const d = dayjs(t.dt_lanc);
     if (d.isBefore(mesStart) || !d.isBefore(mesEndExcl)) return;
     const v = Number(t.valor_lanc || 0);
+    // Qualquer movimento (transferência OU rendimento direto, tipo juros
+    // da BTG) DENTRO de uma conta de investimento não conta como
+    // Entrada/Saída normal -- mas se for transferência vindo de fora
+    // (não "totalmente interna" por já nascer/morrer só entre invest.),
+    // o lado operacional dela ainda precisa refletir no ajuste.
+    if (CONTAS_INVESTIMENTO_COD_CC.has(t.cod_cc)) return; // lado do investimento em si -- nunca conta em lugar nenhum
+    if (transferenciaTotalmenteInterna(t)) {
+      const contasDoGrupo = agrupContas[t.cod_agrup];
+      const vaiPraInvestimento = contasDoGrupo && Array.from(contasDoGrupo).some(cc => CONTAS_INVESTIMENTO_COD_CC.has(cc));
+      if (vaiPraInvestimento) {
+        if (t.natureza === 'P') ajusteInvestimento += v; // saiu do operacional pra investimento
+        else if (t.natureza === 'R') ajusteInvestimento -= v; // voltou do investimento pro operacional
+      }
+      return;
+    }
     if (t.natureza === 'R') entradas += v;
     else if (t.natureza === 'P') saidas += v;
   });
-  const saldoCalculado = saldoInicial + entradas - saidas;
+  const saldoCalculado = saldoInicial + entradas - saidas - ajusteInvestimento;
   const diferenca = saldoReal - saldoCalculado;
   return { saldoInicial, entradas, saidas, saldoCalculado, saldoReal, diferenca };
 }
@@ -21402,22 +21573,23 @@ function buildCapexRefisMensalCompetencia(movements, meses, categories, empresas
       });
       return { mes: m, capex: temCapex ? capex : null, refis: temRefis ? refis : null, capexDetalhe: null, refisDetalhe: null };
     }
-    const monthEndM = m.endOf('month');
+    // FIX 02/09/2026 (pedido Lucas, mesmo fix da versão Caixa): usa
+    // buildResumoCategoriasMes (mesma engine do card "Resumo") em vez da
+    // lista fixa CAPEX_CODIGOS/REFIS_CODIGOS_POR_EMPRESA -- capex/refis
+    // já vêm como mapa {categoria: valor}, direto pro tooltip do gráfico.
+    const monthEndM = m.add(1, 'month');
     let capex = 0, refis = 0;
     const capexDetalhe = {}, refisDetalhe = {};
-    (movements || []).forEach(mv => {
-      if (!empresas.includes(mv._empresa)) return;
-      if (mv.natureza !== 'P' || !(mv.dt_registro || mv.dt_emissao) || !mv.cod_categoria) return;
-      const d = dayjs(mv.dt_registro || mv.dt_emissao);
-      if (d.isBefore(m) || d.isAfter(monthEndM)) return;
-      const v = Number(mv.val_pago || mv.val_liquido || 0);
-      if (!v) return;
-      const cat = catByKey[`${mv._empresa}|${mv.cod_categoria}`];
-      const label = cat ? decodeHtmlEntities(cat.descricao) : mv.cod_categoria;
-      const chaveCat = `${label} (${mv._empresa})`;
-      if (CAPEX_CODIGOS.includes(mv.cod_categoria)) { capex += v; capexDetalhe[chaveCat] = (capexDetalhe[chaveCat] || 0) + v; }
-      const refisCodigos = REFIS_CODIGOS_POR_EMPRESA[mv._empresa] || [];
-      if (refisCodigos.includes(mv.cod_categoria)) { refis += v; refisDetalhe[chaveCat] = (refisDetalhe[chaveCat] || 0) + v; }
+    empresas.forEach(emp => {
+      const dados = buildResumoCategoriasMes(emp, categories, movements, m, monthEndM, 'competencia');
+      Object.entries(dados.capex || {}).forEach(([label, v]) => {
+        capex += v;
+        capexDetalhe[`${label} (${emp})`] = (capexDetalhe[`${label} (${emp})`] || 0) + v;
+      });
+      Object.entries(dados.refis || {}).forEach(([label, v]) => {
+        refis += v;
+        refisDetalhe[`${label} (${emp})`] = (refisDetalhe[`${label} (${emp})`] || 0) + v;
+      });
     });
     const temRefisLive = empresas.some(emp => empresaTemRefis(emp, m));
     return { mes: m, capex, refis: temRefisLive ? refis : null, capexDetalhe, refisDetalhe };
