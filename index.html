@@ -3419,10 +3419,17 @@
         <div class="bloco-head"><div class="bloco-titulo">Resumo (Grupo, R$)</div></div>
         <div class="bloco-body">
           <div class="dre-tbl-wrap">
-            <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col fin-tbl-resumo-competencia-mint">
+            <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col fin-tbl-resumo-competencia-mint" id="tabelaResumoCompetenciaExport">
               <tr id="grupoResumoTesteHeader"><th>Descrição</th></tr>
               <tbody id="grupoResumoTesteBody"></tbody>
             </table>
+          </div>
+          <!-- NOVO (03/09/2026, pedido Lucas): mesmos botões de exportação
+               já usados no Resumo (Grupo, R$) do DRE por Caixa, reaproveitando
+               as funções genéricas exportarTabelaExcel/exportarTabelaPDF. -->
+          <div style="margin-top:10px;display:flex;gap:8px;">
+            <button onclick="exportarTabelaExcel('tabelaResumoCompetenciaExport', 'resumo-competencia')" style="font-size:12px;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--navy-2);color:var(--bone);cursor:pointer;">📊 Exportar Excel</button>
+            <button onclick="exportarTabelaPDF('tabelaResumoCompetenciaExport', 'Resumo (Grupo, R$) — DRE por Competência')" style="font-size:12px;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--navy-2);color:var(--bone);cursor:pointer;">📄 Exportar PDF</button>
           </div>
         </div>
       </div>
@@ -3592,10 +3599,16 @@
             </div>
             <div id="resumoCmcKmnoStatusOficial" style="padding:0 16px 8px;font-size:11px;font-weight:600;"></div>
             <div class="dre-tbl-wrap">
-              <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col fin-tbl-resumo-cmc-mint">
+              <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col fin-tbl-resumo-cmc-mint" id="tabelaResumoCmcExport">
                 <tr id="resumoCmcKmnoHeader"><th>Descrição</th></tr>
                 <tbody id="resumoCmcKmnoBody"></tbody>
               </table>
+            </div>
+            <!-- NOVO (03/09/2026, pedido Lucas): mesmos botões de exportação
+                 já usados no Resumo (Grupo, R$) do DRE por Caixa. -->
+            <div style="margin-top:10px;display:flex;gap:8px;padding:0 16px;">
+              <button onclick="exportarTabelaExcel('tabelaResumoCmcExport', 'resumo-cmc-kmno')" style="font-size:12px;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--navy-2);color:var(--bone);cursor:pointer;">📊 Exportar Excel</button>
+              <button onclick="exportarTabelaPDF('tabelaResumoCmcExport', 'Resumo (KMNO, R$) — CMC real de estoque')" style="font-size:12px;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--navy-2);color:var(--bone);cursor:pointer;">📄 Exportar PDF</button>
             </div>
           </div>
         </div>
@@ -12558,6 +12571,17 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   // Novah, sem tocar em isClientePrevisao() nem em nenhum outro lugar
   // que já a usa.
   const CLIENTE_PREVISAO_GB_NOVAH = 2074008888;
+  // Exclusão cirúrgica (03/09/2026): cliente 3084979827 ("KMNO SPORTS
+  // LTDA") na RT é a própria KMNO (intercompany) -- RT vende pra KMNO,
+  // mesmo padrão já confirmado 2x antes (KMNO->Novah "Serviços Outras
+  // Facções", RT->Novah "Mão de Obra - Facções"), agora do lado da
+  // Receita. Confirmado: esse cliente só tem título em Mar-Jun/2026
+  // (Mar/Abr/Mai são congelados, não afetam o cálculo ao vivo) -- Jul e
+  // Ago/2026 não têm NENHUM título pra ele, o que já explica esses 2
+  // meses baterem exato sem exclusão nenhuma. Único título no período ao
+  // vivo: R$7.985,67 (01/06/2026, RECEBIDO) -- bate exato com o gap de
+  // Receita Bruta de Junho (nosso R$121.916,67 vs nativo R$113.931,00).
+  const CLIENTE_KMNO_SPORTS_RT = 3084979827;
   // Fornecedor placeholder de previsão orçamentária (25/08/2026): cadastro
   // no Omie chama literalmente "PREVISÃO BLUE LINE" (código 2135507291,
   // já constava em PREVISAO_CODIGOS_CLIENTE_POR_EMPRESA mas nunca tinha
@@ -12653,6 +12677,14 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   const resolverDataRegistroReceivable = (empresa, codTitulo, dataEmissao) =>
     registroPorTituloFallback.get(`${empresa}|${codTitulo}`) || dataEmissao;
   const unifiedMovementsNativo = [
+    // FIX 03/09/2026 (decisão Lucas): removida a exclusão do cliente
+    // "KMNO SPORTS" (CLIENTE_KMNO_SPORTS_RT) na Receita Bruta da RT --
+    // intercompany deve CONTAR normal (pedido explícito: "conta tbm"),
+    // consistente com o card "Resumo (Grupo, R$)" que já contava esse
+    // valor. Isso deixa a Receita Bruta de Junho/RT R$7.985,67 acima do
+    // relatório nativo do Omie (que exclui intercompany) -- diferença
+    // esperada e aceita, não é bug. CLIENTE_KMNO_SPORTS_RT continua
+    // declarada (não removida) caso precise reverter.
     ...receivable.filter(r => r.status_titulo !== 'CANCELADO' && !DRE_NATIVO_DUPLICADOS_CONHECIDOS_IDS.has(Number(r.codigo_lancamento_omie)) && !isTituloExcluidoManualmenteKmno(r._empresa, r.codigo_lancamento_omie) && !(r._empresa === 'NOVAH' && Number(r.codigo_cliente_fornecedor) === CLIENTE_PREVISAO_GB_NOVAH)).map(r => ({
       dt_emissao: r.data_emissao,
       dt_registro: resolverDataRegistroReceivable(r._empresa, r.codigo_lancamento_omie, r.data_emissao),
