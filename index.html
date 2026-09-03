@@ -5558,14 +5558,39 @@ function calcSaldoInicialRealizado(contas, categories, cashMovements, empresa, m
   return saldoAtualTotal - movimentosDesdeInicio;
 }
 
+// Contas de investimento (Aplicação Sicredi, BTG Pactual, COTAS SICREDI,
+// Cotas Sicredi, Sicredi- Integralização, Sicredi - Aplicação) — apesar de
+// fluxo_caixa=true no banco (não vamos mudar esse dado), o Omie nativo
+// exclui elas do "Saldo Inicial Realizado"/Receitas/Despesas, só aparecem
+// separadas no "Saldo de Bancos". FIX 03/09/2026 (causa raiz confirmada da
+// regressão "Prova Real KMNO" — commit 02/09 bda97cc trocou Saldo Inicial/
+// Real pra rollback via extrato bruto achando que contasFluxoCaixa já
+// excluía essas contas, o que é falso): usado como parâmetro extra em
+// calcSaldoRollbackExtratoBruto, e no check de transferência totalmente
+// interna dentro de buildProvaRealPorEmpresaMesVivo.
+const CONTAS_INVESTIMENTO_COD_CC = new Set([
+  10520526427, 10470873923, 10493053062, // KMNO: Aplicação Sicredi, BTG Pactual, COTAS SICREDI
+  3115532551, 3081313100,                // RT: COTAS SICREDI, Sicredi- Integralização
+  2060129887, 2069380606,                // NOVAH: Cotas Sicredi, Sicredi - Aplicação
+]);
+// CONTAS_GATEWAY_CARTAO_COD_CC_KMNO: usada só na versão antiga (extrato
+// bruto) da Prova Real, removida em 03/09/2026 quando a Prova Real passou
+// a usar getSaidasEntradaCaixaMes/saldoBancarioMensalTotalEmpresa. Não é
+// mais referenciada em lugar nenhum -- mantida fora do código de propósito.
+
 // Mesmo rollback de calcSaldoInicialRealizado, mas usando o EXTRATO BRUTO
 // (provaRealExtratoCache) em vez de dash_financial_movements (categorizado) —
 // evita depender de dash_saldo_bancario_mensal (tabela separada, sync
 // próprio que pode ficar desatualizado) e usa a MESMA fonte já validada
 // pra Entradas/Saídas da Prova Real (fix 02/09/2026, pedido Lucas: "é só
 // fazer saldo inicial + entrada - saída com os dados que já tem").
-function calcSaldoRollbackExtratoBruto(contas, extrato, empresa, dataAlvo) {
-  const contasCaixa = contasFluxoCaixa(contas, empresa);
+// FIX 03/09/2026: ganhou o 5º parâmetro `contasInvestimento` -- exclui essas
+// contas do total (ver CONTAS_INVESTIMENTO_COD_CC acima). Sem isso, o Saldo
+// Inicial/Real ficava inflado pelo saldo das contas de investimento, que o
+// Omie nativo não conta ali.
+function calcSaldoRollbackExtratoBruto(contas, extrato, empresa, dataAlvo, contasInvestimento) {
+  const investSet = contasInvestimento || new Set();
+  const contasCaixa = contasFluxoCaixa(contas, empresa).filter(c => !investSet.has(c.n_cod_cc));
   const saldoAtualTotal = contasCaixa.reduce((s, c) => s + Number(c.saldo_atual || 0), 0);
   const codsCaixaValidos = new Set(contasCaixa.map(c => c.n_cod_cc));
   const amanha = dayjs().add(1, 'day');
@@ -19472,9 +19497,15 @@ const PROVA_REAL_MESES_ORDEM = ['jan', 'fev', 'mar', 'abr', 'mai'];
 // aparecendo na tabela detalhada "Bancos" (fluxo_caixa=true, pedido
 // anterior do Lucas), só o TOTAL usado pra comparar com o nativo
 // (Prova Real) exclui elas -- igual o Omie faz.
+// FIX 03/09/2026: "SMART ONLINE" (KMNO) também precisa ficar de fora --
+// validado via SQL contra o nativo (Jun/Jul/Ago batem exato SÓ quando essa
+// conta também é excluída, e erram pelo valor exato dela quando não é).
+// É conta de gateway/repasse (mesmo padrão das de investimento), o Omie
+// nativo não conta ela no "Saldo Inicial Realizado".
 const LABELS_INVESTIMENTO_EXCLUIR_DO_TOTAL = [
   'Aplicação Sicredi', 'BTG Pactual', 'COTAS SICREDI',
   'Cotas Sicredi', 'Sicredi- Integralização', 'Sicredi - Aplicação',
+  'SMART ONLINE',
 ];
 function saldoBancarioMensalTotalEmpresa(empresa, mesDayjs) {
   const empresas = empresa === 'TODAS' ? ['KMNO', 'RT', 'NOVAH'] : [empresa];
@@ -19486,7 +19517,13 @@ function saldoBancarioMensalTotalEmpresa(empresa, mesDayjs) {
       achou = true;
       Object.entries(mapa).forEach(([label, v]) => {
         const nomeBase = label.replace(/ \([A-Z]+\)$/, '');
-        if (LABELS_INVESTIMENTO_EXCLUIR_DO_TOTAL.includes(nomeBase)) return;
+        // FIX 03/09/2026: exclusão de investimento só pra KMNO -- validado
+        // que RT precisa da COTAS SICREDI INCLUÍDA (excluir quebrava Jul/Ago
+        // por exatamente R$500/R$600, o saldo da própria conta). Confirmado
+        // via SQL contra os números de RT já validados antes hoje. Novah não
+        // é afetada de qualquer jeito (Cotas Sicredi/Sicredi-Aplicação de lá
+        // nem aparecem nessa tabela, sempre R$0 quando aparecem).
+        if (emp === 'KMNO' && LABELS_INVESTIMENTO_EXCLUIR_DO_TOTAL.includes(nomeBase)) return;
         total += Number(v || 0);
       });
     }
@@ -19496,120 +19533,50 @@ function saldoBancarioMensalTotalEmpresa(empresa, mesDayjs) {
 
 function buildProvaRealPorEmpresaMesVivo(empresa, mesStart) {
   const mesEndExcl = mesStart.add(1, 'month');
-  // FIX 01/09/2026: Saldo Inicial/Real trocado do rollback antigo
-  // (calcSaldoInicialRealizado -- parte do saldo_atual de HOJE e desconta
-  // todo movimento desde o mes ate hoje via dash_financial_movements;
-  // qualquer erro/duplicata nesse periodo inteiro se acumula e some pro
-  // resultado) para dash_saldo_bancario_mensal -- o MESMO saldo oficial
-  // do Omie (ListarExtrato, dia 1 do mes) ja usado e validado 100% no
-  // card "Saldo CAIXA"/Bancos (ver saldoBancarioMensalCombinado). Mantido
-  // o rollback antigo como FALLBACK só pros meses congelados (Jan-Mai)
-  // que nunca tiveram esse sync rodado.
-  // FIX 02/09/2026 (pedido Lucas): Saldo Inicial/Real agora calculado por
-  // ROLLBACK direto do extrato bruto já corrigido (mesma fonte de
-  // Entradas/Saídas abaixo), em vez de depender de dash_saldo_bancario_mensal
-  // (tabela separada, sync próprio -- ficou desatualizada depois do fix de
-  // fluxo_caixa de hoje e não refletia as contas Sicredi/BB da RT). Fallback
-  // pra tabela antiga mantido só caso o extrato bruto não tenha carregado.
-  const saldoInicial = calcSaldoRollbackExtratoBruto(analiseBancosContasCache, provaRealExtratoCache, empresa, mesStart)
-    ?? saldoBancarioMensalTotalEmpresa(empresa, mesStart);
-  const saldoReal = calcSaldoRollbackExtratoBruto(analiseBancosContasCache, provaRealExtratoCache, empresa, mesEndExcl)
-    ?? saldoBancarioMensalTotalEmpresa(empresa, mesEndExcl);
-  // FIX 01/09/2026 (pedido Lucas, tentativa com getSaidasEntradaCaixaMes
-  // REVERTIDA no mesmo dia): a versão categorizada (dash_financial_movements)
-  // não bate com o nativo (testado: RT Jun entrada R$93.972 vs nativo
-  // R$66.054,81) -- fonte categorizada tem seu próprio problema de dado,
-  // não investigado ainda. Volta pro extrato bancário BRUTO
-  // (dash_current_account_transactions, mesmo filtro fluxo_caixa=true já
-  // usado em Saldo Inicial/Real acima) -- JÁ CONFIRMADO bater exato com o
-  // nativo pra RT Jun/Jul após limpar 4 lançamentos órfãos em 01/09/2026
-  // (ver resolvido-prova-real-rt-junho-orfaos-010926 no taco).
-  const contasCaixaProva = contasFluxoCaixa(analiseBancosContasCache, empresa);
-  const codsCaixaValidosProva = new Set(contasCaixaProva.map(c => c.n_cod_cc));
-  let entradas = 0, saidas = 0;
-  // FIX 01/09/2026 (pedido Lucas): exclui transferência entre contas
-  // próprias (origem TRAR/TRAP) de Entradas/Saídas -- MAS só quando as
-  // DUAS pontas da transferência (achadas via cod_agrup, que liga o par)
-  // estão em conta real (fluxo_caixa=true). Achado real: 2 transferências
-  // de Sicredi/Banco do Brasil (conta real) pra "CARTAO 16"/"Cartão de
-  // Crédito Sicredi 10" (contas de cartão, fluxo_caixa=false) são
-  // pagamento de fatura -- dinheiro saiu de verdade da conta real, não é
-  // "conta pagando ela mesma". Excluir isso também (sem checar a outra
-  // ponta) subtraía R$10.145,33 de Saída que deveria continuar contando
-  // (confirmado: sem esse fix, Saídas ficava R$66.974,72 em vez dos
-  // R$77.120,05 do nativo -- diferença exata de R$10.145,33).
-  const agrupContas = {};
-  (provaRealExtratoCache || []).forEach(t => {
-    if (empresa !== 'TODAS' && t._empresa !== empresa) return;
-    if (t.cod_agrup == null) return;
-    if (!agrupContas[t.cod_agrup]) agrupContas[t.cod_agrup] = new Set();
-    agrupContas[t.cod_agrup].add(t.cod_cc);
-  });
-  // NOVO (01/09/2026, versão 2 -- pedido Lucas: contas de investimento
-  // não devem contar no Resumo/Prova Real, só aparecer no "Saldo de
-  // Bancos"). Diferente da tentativa anterior (que mudava fluxo_caixa=
-  // false e quebrava o sync de saldo mensal): aqui as contas continuam
-  // fluxo_caixa=true no banco (sem mudar dado nenhum, "Saldo de Bancos"
-  // e Saldo Inicial/Real da Prova Real continuam incluindo elas
-  // normalmente, sem retrabalho). Só ADICIONA uma lista extra de contas
-  // de investimento que, quando ambas as pontas de uma transferência
-  // (TRAR/TRAP) caem nela + em conta operacional normal, conta como
-  // transferência "interna" (não infla Entrada/Saída do Resumo/DFC).
-  const CONTAS_INVESTIMENTO_COD_CC = new Set([
-    10520526427, 10470873923, 10493053062, // KMNO: Aplicação Sicredi, BTG Pactual, COTAS SICREDI
-    3115532551, 3081313100,                // RT: COTAS SICREDI, Sicredi- Integralização
-    2060129887, 2069380606,                // NOVAH: Cotas Sicredi, Sicredi - Aplicação
-  ]);
-  const transferenciaTotalmenteInterna = (t) => {
-    if (t.origem !== 'TRAR' && t.origem !== 'TRAP') return false;
-    const contasDoGrupo = agrupContas[t.cod_agrup];
-    if (!contasDoGrupo) return false;
-    return Array.from(contasDoGrupo).every(cc => codsCaixaValidosProva.has(cc) || CONTAS_INVESTIMENTO_COD_CC.has(cc));
-  };
-  // NOVO (02/09/2026, pedido Lucas "faz como tá no Omie"): Saldo Inicial/
-  // Real agora EXCLUI o saldo das contas de investimento (ver
-  // LABELS_INVESTIMENTO_EXCLUIR_DO_TOTAL) -- pra isso fechar
-  // matematicamente, qualquer dinheiro que SAIU do caixa operacional
-  // pra investimento no período (líquido) precisa ser descontado do
-  // Saldo Calculado também -- mesmo raciocínio do "Transferências e
-  // Ajustes de Saldo" que o nativo do Omie usa (confirmado: sem isso,
-  // sobra um buraco de R$100.000 exato em Ago/KMNO = a Aplicação
-  // Sicredi). NÃO vira linha visível na tabela (Lucas pediu pra não
-  // mostrar) -- só entra por dentro no saldoCalculado.
-  let ajusteInvestimento = 0;
-  (provaRealExtratoCache || []).forEach(t => {
-    if (empresa !== 'TODAS' && t._empresa !== empresa) return;
-    if (!t.dt_lanc) return;
-    if (t.cod_cc != null && !codsCaixaValidosProva.has(t.cod_cc)) return;
-    const d = dayjs(t.dt_lanc);
-    if (d.isBefore(mesStart) || !d.isBefore(mesEndExcl)) return;
-    const v = Number(t.valor_lanc || 0);
-    // Qualquer movimento (transferência OU rendimento direto, tipo juros
-    // da BTG) DENTRO de uma conta de investimento não conta como
-    // Entrada/Saída normal -- mas se for transferência vindo de fora
-    // (não "totalmente interna" por já nascer/morrer só entre invest.),
-    // o lado operacional dela ainda precisa refletir no ajuste.
-    if (CONTAS_INVESTIMENTO_COD_CC.has(t.cod_cc)) return; // lado do investimento em si -- nunca conta em lugar nenhum
-    if (transferenciaTotalmenteInterna(t)) {
-      const contasDoGrupo = agrupContas[t.cod_agrup];
-      const vaiPraInvestimento = contasDoGrupo && Array.from(contasDoGrupo).some(cc => CONTAS_INVESTIMENTO_COD_CC.has(cc));
-      if (vaiPraInvestimento) {
-        if (t.natureza === 'P') ajusteInvestimento += v; // saiu do operacional pra investimento
-        else if (t.natureza === 'R') ajusteInvestimento -= v; // voltou do investimento pro operacional
-      }
-      return;
+  // FIX 03/09/2026 (pedido Lucas): Prova Real reescrita pra parar de
+  // calcular por cima do extrato bancário bruto (rollback via saldo_atual
+  // de "agora" + reclassificação manual de transferência/investimento/
+  // gateway) -- essa abordagem gerou uma sequência de bugs no mesmo dia
+  // (conta de investimento inflando Saldo Inicial, conta de maquininha/
+  // gateway inflando Entrada/Saída, e o resultado mudando dependendo do
+  // exato momento em que "agora" era calculado). Passa a reusar fontes já
+  // validadas, sem repetir cálculo nenhum:
+  // - Saldo Inicial/Real: saldoBancarioMensalTotalEmpresa -- mesma fonte
+  //   do card "Saldo de Bancos" (dash_saldo_bancario_mensal, saldo oficial
+  //   do Omie no dia 1, sem cálculo por cima). Fallback pro rollback antigo
+  //   só se esse mês não tiver sync ainda (ex: congelado Jan-Mai).
+  // - Entradas/Saídas: FIX 03/09/2026 (pedido Lucas) -- direto de
+  //   dash_orcamento_realizado (orcamentoRealizadoCache), campos
+  //   receitas_realizado/despesas_realizado. Confirmado via SQL batendo
+  //   EXATO com o nativo do Omie nas 3 empresas (Jun/Jul/Ago) sem nenhum
+  //   ajuste por cima -- já inclui Adiantamento de Clientes dentro do
+  //   total (confirmado no detalhamento "Outras Entradas" do relatório
+  //   nativo). Tentativa anterior (getSaidasEntradaCaixaMes, mesma fórmula
+  //   do card "Resumo (Grupo, R$)"/"Saídas e Entradas x Peças Faturadas")
+  //   ficou bem abaixo do nativo pro lado Saídas porque reconstrói por
+  //   categoria e não soma Capex/Distribuição/Refis/Empréstimos -- não foi
+  //   desenhada pra ser exata contra o total oficial, só pra dar o
+  //   detalhamento daquele outro card (que continua usando ela, intocado).
+  //   Sem linha ainda pro mês corrente (ex: Set/2026 antes do fechamento)
+  //   -- fica null/em branco de propósito, sem fallback (pedido Lucas:
+  //   "não se preocupa com esse mês agora").
+  const saldoInicial = saldoBancarioMensalTotalEmpresa(empresa, mesStart)
+    ?? calcSaldoRollbackExtratoBruto(analiseBancosContasCache, provaRealExtratoCache, empresa, mesStart, CONTAS_INVESTIMENTO_COD_CC);
+  const saldoReal = saldoBancarioMensalTotalEmpresa(empresa, mesEndExcl)
+    ?? calcSaldoRollbackExtratoBruto(analiseBancosContasCache, provaRealExtratoCache, empresa, mesEndExcl, CONTAS_INVESTIMENTO_COD_CC);
+
+  let entradas = 0, saidas = 0, achouOficial = false;
+  const empresasCalc = empresa === 'TODAS' ? ['KMNO', 'RT', 'NOVAH'] : [empresa];
+  empresasCalc.forEach(emp => {
+    const row = orcamentoRealizadoCache[`${emp}|${mesStart.format('YYYY-MM')}`];
+    if (row) {
+      achouOficial = true;
+      entradas += Number(row.receitas_realizado || 0);
+      saidas += Number(row.despesas_realizado || 0);
     }
-    if (t.natureza === 'R') entradas += v;
-    else if (t.natureza === 'P') saidas += v;
   });
-  // FIX 02/09/2026: ajusteInvestimento REMOVIDO daqui -- era necessário só
-  // quando saldoInicial vinha de dash_saldo_bancario_mensal (que incluía
-  // contas de investimento no total). Agora que saldoInicial/saldoReal vêm
-  // por rollback direto do extrato via contasFluxoCaixa (que já EXCLUI
-  // COTAS SICREDI/investimento por não estarem nessa lista), somar
-  // ajusteInvestimento aqui duplicava a exclusão e gerava resíduo de
-  // R$500/R$100/etc (o valor exato das contas de investimento movimentadas
-  // no mês) -- confirmado no teste real RT Jun/Jul.
+  if (!achouOficial) return null; // mês sem sync ainda (ex: mês corrente) -- fica em branco, sem fallback
+
   const saldoCalculado = saldoInicial + entradas - saidas;
   const diferenca = saldoReal - saldoCalculado;
   return { saldoInicial, entradas, saidas, saldoCalculado, saldoReal, diferenca };
