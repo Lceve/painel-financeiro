@@ -10303,7 +10303,15 @@ function buildTodosBlocosRealizado(empresa, categories, movements, monthStart, m
     // "Outras Saídas" (2.14.94, refis), R$3.736,97 de despesa real
     // sumindo da conta todo mês.
     B.investimentos = buildBlocoArvorePorPrefixo('investimentos', 'Investimentos', 'P', '2.07.', empresa, categories, totalPorCodigo);
-    B.outras_saidas = buildBlocoArvorePorPrefixo('outras_saidas', 'Outras Saídas', 'P', '2.14.', empresa, categories, totalPorCodigo);
+    // FIX 04/09/2026 (pedido Lucas): "Ocultar Cartão" (2.14.93) tinha
+    // R$25.456,23 em Junho no relatório OFICIAL do Omie
+    // (dash_orcamento_realizado_categoria) -- é a MESMA transação já
+    // excluída de Despesas Diretoria (2.10.99), só que o relatório
+    // oficial (ListarOrcamentos, usado em meses fechados) categoriza ela
+    // diferente do dash_financial_movements (ListarMovimentos). Mesmo
+    // padrão já achado hoje na Novah (1.02.95 vs 1.02.96). Nome "Ocultar"
+    // já indica que deve ser desconsiderado, mesma lógica já aplicada.
+    B.outras_saidas = buildBlocoArvorePorPrefixo('outras_saidas', 'Outras Saídas', 'P', '2.14.', empresa, categories, totalPorCodigo, ['2.14.93']);
     B.dividendos = buildBlocoArvorePorPrefixo('dividendos', 'Dividendos', 'P', '2.15.', empresa, categories, totalPorCodigo);
     B.pagtos_emprestimos = buildBlocoArvorePorPrefixo('pagtos_emprestimos', 'Pagtos Empréstimos', 'P', '2.13.', empresa, categories, totalPorCodigo);
     // NOVO (14/08/2026, pedido Lucas): resto dos blocos da KMNO também
