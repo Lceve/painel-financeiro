@@ -10311,7 +10311,10 @@ function buildTodosBlocosRealizado(empresa, categories, movements, monthStart, m
     // diferente do dash_financial_movements (ListarMovimentos). Mesmo
     // padrão já achado hoje na Novah (1.02.95 vs 1.02.96). Nome "Ocultar"
     // já indica que deve ser desconsiderado, mesma lógica já aplicada.
-    B.outras_saidas = buildBlocoArvorePorPrefixo('outras_saidas', 'Outras Saídas', 'P', '2.14.', empresa, categories, totalPorCodigo, ['2.14.93']);
+    // FIX 04/09/2026 (pedido Lucas, confirmado): "Outras Saídas" (2.14.94)
+    // NÃO é despesa real de negócio -- excluída do cálculo por decisão
+    // explícita do Lucas (mesmo tratamento de "Ocultar Cartão" acima).
+    B.outras_saidas = buildBlocoArvorePorPrefixo('outras_saidas', 'Outras Saídas', 'P', '2.14.', empresa, categories, totalPorCodigo, ['2.14.93', '2.14.94']);
     B.dividendos = buildBlocoArvorePorPrefixo('dividendos', 'Dividendos', 'P', '2.15.', empresa, categories, totalPorCodigo);
     B.pagtos_emprestimos = buildBlocoArvorePorPrefixo('pagtos_emprestimos', 'Pagtos Empréstimos', 'P', '2.13.', empresa, categories, totalPorCodigo);
     // NOVO (14/08/2026, pedido Lucas): resto dos blocos da KMNO também
