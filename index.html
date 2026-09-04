@@ -18180,8 +18180,11 @@ function renderResumoCmcKmnoChart(evolucaoMensal) {
   const canvas = document.getElementById('chartResumoCmcKmno');
   if (!canvas) return;
   const labels = evolucaoMensal.map(e => DRE_ARVORE_NOMES_MES[e.mes.month()]);
+  // FIX 04/09/2026 (pedido Lucas, mesma mudança do gráfico "Evolução
+  // Mensal — Grupo"): linha virou barra, com valor em cima da barra
+  // (chartjs-plugin-datalabels, plugin local, não afeta outros gráficos).
   const dataset = (label, chave, cor) => ({
-    label, data: evolucaoMensal.map(e => e[chave]), borderColor: cor, backgroundColor: cor, tension: 0.3, fill: false,
+    label, data: evolucaoMensal.map(e => e[chave]), backgroundColor: cor,
   });
   const datasets = [
     dataset('Faturamento', 'receitaBruta', CHART_COLORS.blue),
@@ -18192,7 +18195,7 @@ function renderResumoCmcKmnoChart(evolucaoMensal) {
   ];
   if (chartResumoCmcKmno) chartResumoCmcKmno.destroy();
   chartResumoCmcKmno = new Chart(canvas.getContext('2d'), {
-    type: 'line',
+    type: 'bar',
     data: { labels, datasets },
     options: {
       responsive: true,
@@ -21148,7 +21151,9 @@ function renderGrupoDreCompetenciaCopia(monthStart, monthEnd) {
   // ---- Evolução Mensal (mesma lógica de renderGrupoDfc, ids da cópia) ----
   const inicioAno = monthStart.startOf('year');
   const meses = [];
-  let cursor = inicioAno;
+  // FIX 04/09/2026 (pedido Lucas): era sempre Janeiro do ano corrente,
+  // ignorando o "De" escolhido no topo -- agora usa monthStart de verdade.
+  let cursor = monthStart.startOf('month');
   let guard = 0;
   // FIX 28/07 (bug: "aparece 1 mês a mais do que está selecionado no
   // Até") — monthEnd é EXCLUSIVO (1º dia do mês seguinte ao "Até"
@@ -21161,28 +21166,37 @@ function renderGrupoDreCompetenciaCopia(monthStart, monthEnd) {
     guard++;
   }
   const mesAtualIdxEvolucao = indiceMes(dayjs());
+  // FIX 04/09/2026 (pedido Lucas): "Evolução Mensal — Grupo" dessa aba
+  // (Competência) usava uma fonte PRÓPRIA (buildMetricasGrupoDfc/
+  // EXCEL_HISTORICO_GRUPO_DRE), diferente da tabela grande "DRE por
+  // Competência" logo acima (buildResumoDetalhadoMesAoVivo/
+  // RESUMO_DETALHADO_MESES_DRE) -- dava número diferente pra Faturamento/
+  // EBITDA/etc na MESMA tela, mesma aba, sem nenhum motivo de negócio.
+  // Trocado pra usar a MESMA fonte da tabela grande -- só 1 número por
+  // conceito dentro dessa aba, ponto final.
   const evolucaoMensal = meses.map(m => {
     const chave = m.format('YYYY-MM');
     if (indiceMes(m) > mesAtualIdxEvolucao) {
       return { mes: m, receitaBruta: 0, cmv: 0, margemContribuicao: 0, ebitda: 0, saldoLiquido: 0, semDado: false };
     }
     const fimMes = m.add(1, 'month');
-    let metricasMes;
-    if (empresaUnicaTopo) {
-      metricasMes = buildFrozenMetricasCompetenciaPorEmpresa(empresaUnicaTopo, chave)
-        || (!m.isBefore(EXCEL_CONGELADO_ATE) ? buildMetricasGrupoDfc(empresaUnicaTopo, categoriesCache, movementsCache, m, fimMes) : null);
-    } else {
-      const congelado = EXCEL_HISTORICO_GRUPO_DRE[chave];
-      metricasMes = congelado || buildMetricasGrupoDfcPeriodo(categoriesCache, movementsCache, m, fimMes).grupo;
-    }
-    if (!metricasMes) return { mes: m, receitaBruta: null, cmv: null, margemContribuicao: null, ebitda: null, saldoLiquido: null, semDado: true };
+    const dado = empresaUnicaTopo
+      ? (buildResumoDetalhadoMesFrozenPorEmpresa(empresaUnicaTopo, chave)
+        || (!m.isBefore(EXCEL_CONGELADO_ATE) && categoriesCache && movementsCache
+          ? buildResumoDetalhadoMesAoVivo(categoriesCache, movementsCache, m, fimMes, empresaUnicaTopo)
+          : null))
+      : (RESUMO_DETALHADO_MESES_DRE[chave]
+        || (!m.isBefore(EXCEL_CONGELADO_ATE) && categoriesCache && movementsCache
+          ? buildResumoDetalhadoMesAoVivo(categoriesCache, movementsCache, m, fimMes)
+          : null));
+    if (!dado) return { mes: m, receitaBruta: null, cmv: null, margemContribuicao: null, ebitda: null, saldoLiquido: null, semDado: true };
     return {
       mes: m,
-      receitaBruta: metricasMes.receitaBruta,
-      cmv: metricasMes.cmv,
-      margemContribuicao: metricasMes.margemContribuicao,
-      ebitda: metricasMes.ebitda,
-      saldoLiquido: metricasMes.saldoLiquido,
+      receitaBruta: dado.receita,
+      cmv: dado.cmv,
+      margemContribuicao: dado.margemContribuicao,
+      ebitda: dado.ebitda,
+      saldoLiquido: dado.saldoLiquido,
       semDado: false,
     };
   });
@@ -21372,7 +21386,9 @@ function renderGrupoDfc(monthStart, monthEnd) {
 
   // ---- Evolução Mensal — Grupo (Jan até o mês selecionado do ano corrente) ----
   const meses = [];
-  let cursor = inicioAno;
+  // FIX 04/09/2026 (pedido Lucas): era sempre Janeiro do ano corrente,
+  // ignorando o "De" escolhido no topo -- agora usa monthStart de verdade.
+  let cursor = monthStart.startOf('month');
   let guard = 0;
   // FIX 28/07 (bug: "aparece 1 mês a mais do que está selecionado no
   // Até") — monthEnd é EXCLUSIVO (1º dia do mês seguinte ao "Até"
@@ -21504,13 +21520,16 @@ function renderGrupoDfcChart(evolucaoMensal, canvasId) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   const labels = evolucaoMensal.map(e => DRE_ARVORE_NOMES_MES[e.mes.month()]);
+  // FIX 04/09/2026 (pedido Lucas): gráfico de linha virou gráfico de
+  // barras, com o valor escrito em cima/dentro de cada barra
+  // (chartjs-plugin-datalabels, carregado só pra esse fim -- plugin
+  // passado local via "plugins: [ChartDataLabels]" nesta instância, NÃO
+  // registrado globalmente, então não afeta nenhum outro gráfico do
+  // dashboard).
   const dataset = (label, chave, cor) => ({
     label,
     data: evolucaoMensal.map(e => e[chave]),
-    borderColor: cor,
     backgroundColor: cor,
-    tension: 0.3,
-    fill: false,
   });
   const datasets = [
     dataset('Faturamento', 'receitaBruta', CHART_COLORS.blue),
@@ -21521,7 +21540,7 @@ function renderGrupoDfcChart(evolucaoMensal, canvasId) {
   ];
   if (chartGrupoDfcInstances[canvasId]) chartGrupoDfcInstances[canvasId].destroy();
   chartGrupoDfcInstances[canvasId] = new Chart(canvas.getContext('2d'), {
-    type: 'line',
+    type: 'bar',
     data: { labels, datasets },
     options: {
       responsive: true,
