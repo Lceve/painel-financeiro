@@ -10263,7 +10263,16 @@ function buildTodosBlocosRealizado(empresa, categories, movements, monthStart, m
     // empréstimo (recebimento fica em 1.02, pagamento em 2.05.03), que
     // ganham bloco PRÓPRIO abaixo, senão contariam 2x.
     B.despesas_financeiras = buildBlocoArvorePorPrefixo('despesas_financeiras', 'Despesas Financeiras', 'P', '2.05.', empresa, categories, totalPorCodigo, ['2.05.03']);
-    B.receitas_financeiras = buildBlocoArvorePorPrefixo('receitas_financeiras', 'Receitas Financeiras', 'R', '1.02.', empresa, categories, totalPorCodigo, ['1.02.98', '1.02.99', '1.02.97'], ['Transferências entre contas', 'Transferencias entre contas']);
+    // FIX 04/09/2026 (pedido Lucas): "Outras Entradas" (1.02.95) tinha
+    // R$6.000 em Junho/2026 no relatório OFICIAL do Omie
+    // (dash_orcamento_realizado_categoria), mesma data e mesmo valor da
+    // "Transferência entre contas" (1.02.96) já excluída acima -- é a
+    // MESMA transação (erro de contra-lançamento já documentado), só que
+    // o endpoint ListarOrcamentos (relatório oficial) e o ListarMovimentos
+    // (dash_financial_movements) do Omie categorizaram ela diferente entre
+    // si. Excluído por código (não por nome -- "Outras Entradas" pode ter
+    // uso legítimo futuro, só esse valor específico é o erro conhecido).
+    B.receitas_financeiras = buildBlocoArvorePorPrefixo('receitas_financeiras', 'Receitas Financeiras', 'R', '1.02.', empresa, categories, totalPorCodigo, ['1.02.98', '1.02.99', '1.02.97', '1.02.95'], ['Transferências entre contas', 'Transferencias entre contas']);
     B.emprestimos_recebidos = buildBlocoArvorePorPrefixo('emprestimos_recebidos', 'Recebimento Empréstimos', 'R', ['1.02.98', '1.02.99', '1.04.01'], empresa, categories, totalPorCodigo);
     B.emprestimos_pagos    = buildBlocoArvorePorPrefixo('emprestimos_pagos', 'Pagamento de Empréstimos', 'P', ['2.05.03'], empresa, categories, totalPorCodigo);
   }
@@ -10286,7 +10295,7 @@ function buildTodosBlocosRealizado(empresa, categories, movements, monthStart, m
     // NOVO (11/08/2026, pedido Lucas): "6 Despesas Administrativas
     // Diretoria" (2.10) é raiz própria no Omie, separada de Despesas
     // Administração — linha pai/filhos separada (não fundida em ADM).
-    B.despesas_diretoria = buildBlocoArvorePorPrefixo('despesas_diretoria', 'Despesas Diretoria', 'P', '2.10.', empresa, categories, totalPorCodigo);
+    B.despesas_diretoria = buildBlocoArvorePorPrefixo('despesas_diretoria', 'Despesas Diretoria', 'P', '2.10.', empresa, categories, totalPorCodigo, ['2.10.99']);
     // NOVO (14/08/2026, pedido Lucas): Investimentos/Outras Saídas/
     // Dividendos/Pagto Empréstimos convertidos pra código/prefixo, mesmo
     // motivo dos outros — a lista de nomes fixa estava desatualizada e
@@ -10359,7 +10368,7 @@ function buildTodosBlocosRealizado(empresa, categories, movements, monthStart, m
     // Nacional Parcelado (2.06.06) e Parcelamento ICMS (2.06.07) —
     // antes não caíam em nenhum bucket (nomes velhos não bateram com o
     // que o financeiro lançou em Jun/2026, ficavam invisíveis).
-    B.outros = buildBlocoArvorePorPrefixo('outros', 'Outros', 'P', ['2.08.', '2.06.06', '2.06.07'], empresa, categories, totalPorCodigo);
+    B.outros = buildBlocoArvorePorPrefixo('outros', 'Outros', 'P', ['2.08.', '2.06.06', '2.06.07'], empresa, categories, totalPorCodigo, ['2.08.93']);
     // FIX 17/08/2026 (pedido Lucas): "Despesas Financeiras" convertida
     // de lista de nomes fixa pra código (2.05.) — "Tarifas Boletos"/
     // "Juros Pagos" tinham nome diferente do que a lista antiga
