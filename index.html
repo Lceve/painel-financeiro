@@ -3802,7 +3802,7 @@
       <button class="btn-back" onclick="switchView('viewMenu')">← Voltar para o Menu</button>
     </div>
     <div class="section-head">
-      <h2>Comercial (KMNO)</h2>
+      <h2 id="comercialTituloEmpresa">Comercial (KMNO)</h2>
     </div>
 
     <div class="grupo-dfc-cards">
@@ -3956,7 +3956,7 @@ const VIEW_DISPLAY_NAMES = {
   viewSaidasEntradasPecas: 'Saídas e Entradas x Peças Faturadas',
   viewIndicadores: 'Indicadores',
   viewSaldoBancos: 'Saldo dos Bancos',
-  viewComercial: 'Comercial (KMNO)',
+  viewComercial: 'Comercial',
   viewCicloFinanceiro: 'Ciclo Financeiro',
   viewProjections: 'Projeção, Tendência e Metas',
   viewOutrosPendentes: 'Validação de Categorias',
@@ -10263,16 +10263,7 @@ function buildTodosBlocosRealizado(empresa, categories, movements, monthStart, m
     // empréstimo (recebimento fica em 1.02, pagamento em 2.05.03), que
     // ganham bloco PRÓPRIO abaixo, senão contariam 2x.
     B.despesas_financeiras = buildBlocoArvorePorPrefixo('despesas_financeiras', 'Despesas Financeiras', 'P', '2.05.', empresa, categories, totalPorCodigo, ['2.05.03']);
-    // FIX 04/09/2026 (pedido Lucas): "Outras Entradas" (1.02.95) tinha
-    // R$6.000 em Junho/2026 no relatório OFICIAL do Omie
-    // (dash_orcamento_realizado_categoria), mesma data e mesmo valor da
-    // "Transferência entre contas" (1.02.96) já excluída acima -- é a
-    // MESMA transação (erro de contra-lançamento já documentado), só que
-    // o endpoint ListarOrcamentos (relatório oficial) e o ListarMovimentos
-    // (dash_financial_movements) do Omie categorizaram ela diferente entre
-    // si. Excluído por código (não por nome -- "Outras Entradas" pode ter
-    // uso legítimo futuro, só esse valor específico é o erro conhecido).
-    B.receitas_financeiras = buildBlocoArvorePorPrefixo('receitas_financeiras', 'Receitas Financeiras', 'R', '1.02.', empresa, categories, totalPorCodigo, ['1.02.98', '1.02.99', '1.02.97', '1.02.95'], ['Transferências entre contas', 'Transferencias entre contas']);
+    B.receitas_financeiras = buildBlocoArvorePorPrefixo('receitas_financeiras', 'Receitas Financeiras', 'R', '1.02.', empresa, categories, totalPorCodigo, ['1.02.98', '1.02.99', '1.02.97'], ['Transferências entre contas', 'Transferencias entre contas']);
     B.emprestimos_recebidos = buildBlocoArvorePorPrefixo('emprestimos_recebidos', 'Recebimento Empréstimos', 'R', ['1.02.98', '1.02.99', '1.04.01'], empresa, categories, totalPorCodigo);
     B.emprestimos_pagos    = buildBlocoArvorePorPrefixo('emprestimos_pagos', 'Pagamento de Empréstimos', 'P', ['2.05.03'], empresa, categories, totalPorCodigo);
   }
@@ -10295,7 +10286,7 @@ function buildTodosBlocosRealizado(empresa, categories, movements, monthStart, m
     // NOVO (11/08/2026, pedido Lucas): "6 Despesas Administrativas
     // Diretoria" (2.10) é raiz própria no Omie, separada de Despesas
     // Administração — linha pai/filhos separada (não fundida em ADM).
-    B.despesas_diretoria = buildBlocoArvorePorPrefixo('despesas_diretoria', 'Despesas Diretoria', 'P', '2.10.', empresa, categories, totalPorCodigo, ['2.10.99']);
+    B.despesas_diretoria = buildBlocoArvorePorPrefixo('despesas_diretoria', 'Despesas Diretoria', 'P', '2.10.', empresa, categories, totalPorCodigo);
     // NOVO (14/08/2026, pedido Lucas): Investimentos/Outras Saídas/
     // Dividendos/Pagto Empréstimos convertidos pra código/prefixo, mesmo
     // motivo dos outros — a lista de nomes fixa estava desatualizada e
@@ -10303,18 +10294,7 @@ function buildTodosBlocosRealizado(empresa, categories, movements, monthStart, m
     // "Outras Saídas" (2.14.94, refis), R$3.736,97 de despesa real
     // sumindo da conta todo mês.
     B.investimentos = buildBlocoArvorePorPrefixo('investimentos', 'Investimentos', 'P', '2.07.', empresa, categories, totalPorCodigo);
-    // FIX 04/09/2026 (pedido Lucas): "Ocultar Cartão" (2.14.93) tinha
-    // R$25.456,23 em Junho no relatório OFICIAL do Omie
-    // (dash_orcamento_realizado_categoria) -- é a MESMA transação já
-    // excluída de Despesas Diretoria (2.10.99), só que o relatório
-    // oficial (ListarOrcamentos, usado em meses fechados) categoriza ela
-    // diferente do dash_financial_movements (ListarMovimentos). Mesmo
-    // padrão já achado hoje na Novah (1.02.95 vs 1.02.96). Nome "Ocultar"
-    // já indica que deve ser desconsiderado, mesma lógica já aplicada.
-    // FIX 04/09/2026 (pedido Lucas, confirmado): "Outras Saídas" (2.14.94)
-    // NÃO é despesa real de negócio -- excluída do cálculo por decisão
-    // explícita do Lucas (mesmo tratamento de "Ocultar Cartão" acima).
-    B.outras_saidas = buildBlocoArvorePorPrefixo('outras_saidas', 'Outras Saídas', 'P', '2.14.', empresa, categories, totalPorCodigo, ['2.14.93', '2.14.94']);
+    B.outras_saidas = buildBlocoArvorePorPrefixo('outras_saidas', 'Outras Saídas', 'P', '2.14.', empresa, categories, totalPorCodigo);
     B.dividendos = buildBlocoArvorePorPrefixo('dividendos', 'Dividendos', 'P', '2.15.', empresa, categories, totalPorCodigo);
     B.pagtos_emprestimos = buildBlocoArvorePorPrefixo('pagtos_emprestimos', 'Pagtos Empréstimos', 'P', '2.13.', empresa, categories, totalPorCodigo);
     // NOVO (14/08/2026, pedido Lucas): resto dos blocos da KMNO também
@@ -10379,7 +10359,7 @@ function buildTodosBlocosRealizado(empresa, categories, movements, monthStart, m
     // Nacional Parcelado (2.06.06) e Parcelamento ICMS (2.06.07) —
     // antes não caíam em nenhum bucket (nomes velhos não bateram com o
     // que o financeiro lançou em Jun/2026, ficavam invisíveis).
-    B.outros = buildBlocoArvorePorPrefixo('outros', 'Outros', 'P', ['2.08.', '2.06.06', '2.06.07'], empresa, categories, totalPorCodigo, ['2.08.93']);
+    B.outros = buildBlocoArvorePorPrefixo('outros', 'Outros', 'P', ['2.08.', '2.06.06', '2.06.07'], empresa, categories, totalPorCodigo);
     // FIX 17/08/2026 (pedido Lucas): "Despesas Financeiras" convertida
     // de lista de nomes fixa pra código (2.05.) — "Tarifas Boletos"/
     // "Juros Pagos" tinham nome diferente do que a lista antiga
@@ -11473,11 +11453,26 @@ async function renderComercial() {
   if (!root) return;
 
   try {
+    // FIX 03/09/2026 (pedido Lucas): Comercial deixou de ser fixo em KMNO —
+    // agora segue o seletor global de empresas do topo da página
+    // (selectedCompanyKeys), igual todo o resto do dashboard. Busca os
+    // dados de cada empresa marcada e junta tudo num array só antes de
+    // seguir com o resto da função (que já soma/agrega sem se importar
+    // de qual empresa cada linha veio).
+    const empresasComercial = (selectedCompanyKeys && selectedCompanyKeys.length) ? selectedCompanyKeys : ['KMNO', 'NOVAH', 'RT'];
+    // FIX 03/09/2026: título dinâmico, mesmo padrão já usado em outras
+    // telas (ex: label do topo em `selectedCompanyKeys.map(k =>
+    // COMPANIES[k].label).join(' + ')`).
+    const tituloEl = document.getElementById('comercialTituloEmpresa');
+    if (tituloEl) tituloEl.textContent = `Comercial (${empresasComercial.map(k => COMPANIES[k]?.label || k).join(' + ')})`;
+    const buscarPorEmpresa = (pathBase) => Promise.all(
+      empresasComercial.map(emp => sbPaged(pathBase, emp).catch(() => []))
+    ).then(porEmpresa => porEmpresa.flat());
     const [orders, items, products, vendedores] = await Promise.all([
-      sbPaged('dash_orders?select=codigo_pedido,codigo_cliente,codigo_vendedor,etapa,origem_pedido,valor_total_pedido,valor_descontos,valor_mercadorias,data_pedido,cancelado,faturado', 'KMNO'),
-      sbPaged('dash_order_items?select=codigo_pedido,codigo_produto,quantidade,valor_unitario,valor_desconto,valor_total', 'KMNO'),
-      sbPaged('dash_products?select=codigo_produto,descricao,codigo_familia,descricao_familia', 'KMNO'),
-      sbPaged('dash_vendedores?select=codigo,nome', 'KMNO'),
+      buscarPorEmpresa('dash_orders?select=codigo_pedido,codigo_cliente,codigo_vendedor,etapa,origem_pedido,valor_total_pedido,valor_descontos,valor_mercadorias,data_pedido,cancelado,faturado'),
+      buscarPorEmpresa('dash_order_items?select=codigo_pedido,codigo_produto,quantidade,valor_unitario,valor_desconto,valor_total'),
+      buscarPorEmpresa('dash_products?select=codigo_produto,descricao,codigo_familia,descricao_familia'),
+      buscarPorEmpresa('dash_vendedores?select=codigo,nome'),
     ]);
 
     const { de, ate } = getSelectedPeriodRange();
@@ -12378,7 +12373,10 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   // Financeiras do relatório nativo do Omie batem exato somando isso).
   // Filtra cod_titulo nulo/0 pra não contar de novo o que já vem de título
   // formal (accounts_payable/receivable).
-  const extratoSemTituloPath = 'dash_current_account_transactions?select=dt_lanc,valor_lanc,cod_categoria,natureza,cod_titulo,origem';
+  // NOVO campo cod_cc (04/09/2026, pedido Lucas): precisa pra achar
+  // especificamente a conta BTG Pactual dentro do extrato sem título —
+  // ver "Recebimento de Aplicação" em buildResumoDetalhadoMesAoVivo.
+  const extratoSemTituloPath = 'dash_current_account_transactions?select=dt_lanc,valor_lanc,cod_categoria,natureza,cod_titulo,origem,cod_cc,cod_lanc';
   // NOVO (01/09/2026): extrato bancário COMPLETO (com cod_cc), usado só
   // pela Prova Real dos Caixas -- diferente de extratoSemTituloPath acima
   // (que só pega origem EXTR/EXTP sem título, um subconjunto pequeno).
@@ -18811,12 +18809,67 @@ function renderGrupoResumoPorEmpresa(empresaKey, monthStart, monthEnd) {
         </tr>`;
     }).join('');
 
+    // NOVO 04/09/2026 (pedido Lucas): "Recebimento de Aplicação" — resgate
+    // mensal da conta BTG Pactual, mostrado como linha PURAMENTE VISUAL
+    // dentro de "Receitas Financeiras" (só KMNO, só modo Caixa). Pedido
+    // explícito do Lucas: NÃO soma em nada (nem no total de Receitas
+    // Financeiras, nem em Saldo Líquido, nem em Saldo CAIXA) — por isso é
+    // montada à parte aqui, direto de dreArvoreExtratoSemTituloCache, e
+    // simplesmente concatenada no HTML depois que tudo mais já foi
+    // calculado. Ver tentativa anterior (revertida) que tentava somar de
+    // verdade — motivo da reversão: "Saldo CAIXA" é calculado por saldo
+    // bancário real (bancoSeguinte - bancoAtual), que não muda com isso
+    // (o dinheiro fica dentro do BTG, não sai pra conta corrente) —
+    // deixava "Saldo Líquido" e "Saldo CAIXA" divergindo sem necessidade.
+    let linhaCosmeticaBtg = '';
+    if (l.chave === 'receitasFinanceiras' && empresaKey === 'KMNO') {
+      const COD_CC_BTG_PACTUAL_KMNO = '10470873923';
+      const valoresBtg = mesesValidos.map(m => {
+        if (!m.live) return 0;
+        // FIX 04/09/2026 (bug achado: Julho mostrava R$17.685, o dobro do
+        // certo R$8.842,35) — dedup por cod_lanc antes de somar. A causa
+        // raiz exata não foi confirmada (só existe 1 linha no banco pra
+        // essa data/conta/categoria), mas isso protege contra qualquer
+        // duplicata que apareça no cache do lado do JS, seja qual for a
+        // causa (recarregamento duplo, cache não limpo, etc).
+        const vistos = new Set();
+        return (dreArvoreExtratoSemTituloCache || [])
+          .filter(t => t._empresa === 'KMNO'
+            && String(t.cod_cc) === COD_CC_BTG_PACTUAL_KMNO
+            && t.cod_categoria === '1.02.02'
+            && t.dt_lanc && dayjs(t.dt_lanc).isSame(m.mesDayjs, 'month'))
+          .filter(t => {
+            const chave = t.cod_lanc || `${t.dt_lanc}|${t.valor_lanc}|${t.natureza}`;
+            if (vistos.has(chave)) return false;
+            vistos.add(chave);
+            return true;
+          })
+          .reduce((s, t) => s + Number(t.valor_lanc || 0) * (t.natureza === 'P' ? -1 : 1), 0);
+      });
+      if (valoresBtg.some(v => v)) {
+        const totalBtg = valoresBtg.reduce((a, b) => a + b, 0);
+        const mediaBtg = valoresBtg.length ? totalBtg / valoresBtg.length : 0;
+        linhaCosmeticaBtg = `
+        <tr class="dre-tbl-row" style="color:#5a7268;font-size:12px;" title="Resgate/rendimento da aplicação BTG Pactual — informativo, não soma no total (o dinheiro fica reinvestido, não vira caixa disponível)">
+          <td class="dre-tbl-sticky">Recebimento de Aplicação*</td>
+          ${valoresBtg.map((v, i) => {
+            const baseRecebimentoMes = receitaPorMes[i];
+            const avPctMes = baseRecebimentoMes ? (v / baseRecebimentoMes * 100) : null;
+            return `<td class="num">${fmtBRL(v)}</td><td class="num total-pct">${avPctMes === null ? '—' : avPctMes.toFixed(1).replace('.', ',') + '%'}</td>`;
+          }).join('')}
+          <td class="num">${fmtBRL(totalBtg)}</td>
+          <td class="num">${fmtBRL(mediaBtg)}</td>
+          <td class="num total-pct">—</td>
+        </tr>`;
+      }
+    }
+
     // Pedido 28/07: linhas-filho (categorias) aparecem ACIMA da linha
     // pai, não abaixo — a linha pai vira o "total" na base do grupo,
     // em vez de cabeçalho no topo. Só nesta tabela (Resumo por Empresa),
     // por pedido explícito — não replicado nas outras árvores
     // (Tipo/Grupo/Conta do DRE etc.), que continuam abrindo pra baixo.
-    htmlPorChave[l.chave] = linhasCategorias + linhaPai;
+    htmlPorChave[l.chave] = linhasCategorias + linhaCosmeticaBtg + linhaPai;
   });
 
   // Linha de SUBTOTAL calculada (sem categorias, sem clique — mesmo
@@ -19028,11 +19081,17 @@ function renderGrupoResumoPorEmpresa(empresaKey, monthStart, monthEnd) {
   // só voltar a chamar linhaItemCombinado('(+/-) Transferências e
   // Ajustes de Saldo', ajustePorMes) nos 3 branches (procurar por
   // "ESCONDIDA nas 3 empresas" mais abaixo nesta função).
-  const bancoTotalPorMes = (chave) => {
-    const mapa = saldoBancarioMensalCache[`${empresaKey}|${chave}`];
-    if (!mapa) return null;
-    return Object.values(mapa).reduce((s, v) => s + v, 0);
-  };
+  // FIX 04/09/2026 (bug real achado, pré-existente -- confirmado contra o
+  // nativo Omie "DFC (Fluxo de Caixa por Categoria)": "Saldo CAIXA" somava
+  // TODAS as contas bancárias, incluindo as de investimento (BTG Pactual,
+  // COTAS SICREDI etc) -- por isso nunca batia com o "5. RESULTADO
+  // REALIZADO" nativo (KMNO Jun: nosso -R$32.599 vs nativo -R$39.460,84).
+  // Reaproveita saldoBancarioMensalTotalEmpresa() -- MESMA função já usada
+  // e validada pela Prova Real, que já exclui essas contas certinho (só
+  // pra KMNO -- RT/Novah não são afetadas, ver comentário na função).
+  // Validado manualmente: excluindo essas contas, Saldo Inicial de
+  // Jun/Jul batem exato (R$299.319,72 / R$259.858,88) com o nativo.
+  const bancoTotalPorMes = (chave) => saldoBancarioMensalTotalEmpresa(empresaKey, dayjs(chave + '-01'));
   const ajustePorMes = mesesValidos.map((m, i) => {
     const bancoAtual = bancoTotalPorMes(m.chave);
     const bancoSeguinte = bancoTotalPorMes(m.mesDayjs.add(1, 'month').format('YYYY-MM'));
