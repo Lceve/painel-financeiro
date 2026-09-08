@@ -6532,9 +6532,20 @@ function acharContaCompletaPorCodigo(arvore, codigo) {
 //
 // Escopo do Grupo: KMNO+NOVAH (RT fica de fora, mesmo escopo que o
 // congelado do Excel sempre teve — sem mudança de comportamento aí).
-function buildResumoCompetenciaViaArvoreNativa(empresaFiltro, monthStart, monthEnd) {
+function buildResumoCompetenciaViaArvoreNativa(empresasFiltro, monthStart, monthEnd) {
   if (!dreArvoreCategoriesCache || !dreArvoreMovementsCacheNativo) return null;
-  const empresas = empresaFiltro ? [empresaFiltro] : ['KMNO', 'NOVAH'];
+  // FIX 08/09/2026 (pedido Lucas, item 7 do docx 04/09): "Resumo (Grupo,
+  // R$)" tinha que seguir o seletor -- 1 empresa mostra só ela, 2+ soma
+  // as selecionadas. Já parcialmente funcionava (empresaFiltro singular),
+  // mas o "senão" (0 ou 2+ selecionadas) sempre caía num hardcode
+  // ['KMNO', 'NOVAH'] -- RT nunca entrava na soma do Grupo, e escolher
+  // 2 empresas específicas (ex: RT+NOVAH) na prática mostrava sempre
+  // KMNO+NOVAH, ignorando a seleção real. Agora aceita uma LISTA de
+  // empresas (empresasFiltro); string antiga ainda funciona (normalizada
+  // pra array logo abaixo, retrocompatibilidade com o outro chamador).
+  const empresas = empresasFiltro
+    ? (Array.isArray(empresasFiltro) ? empresasFiltro : [empresasFiltro])
+    : ['KMNO', 'RT', 'NOVAH']; // nenhuma seleção = "Todas as Empresas": agora inclui RT
   const meses = [monthStart];
 
   const arvoresPorEmpresa = {};
@@ -14040,25 +14051,22 @@ function renderImpostosView() {
   const d = IMPOSTOS_KMNO;
   const n = IMPOSTOS_KMNO_MESES.length;
 
+  // FIX 08/09/2026 (pedido Lucas): essa view ignorava totalmente o
+  // seletor de empresa do topo -- sempre mostrava KMNO detalhado + DAS
+  // RT + DAS Novah juntos, direto. Agora respeita selectedCompanyKeys:
+  // só a(s) empresa(s) marcada(s) aparece(m), e com 2+ marcadas os
+  // cards de resumo somam só as selecionadas.
+  const empresasSelImpostos = (selectedCompanyKeys && selectedCompanyKeys.length)
+    ? selectedCompanyKeys
+    : ['KMNO', 'RT', 'NOVAH']; // nenhuma seleção = "Todas as Empresas", mesmo comportamento de antes
+  const mostraKmno = empresasSelImpostos.includes('KMNO');
+  const mostraRt = empresasSelImpostos.includes('RT');
+  const mostraNovah = empresasSelImpostos.includes('NOVAH');
+
   // Cards de resumo: total de cada imposto no acumulado exibido, e %
   // médio sobre a receita bruta.
-  const totalImpostos = d.irpj.map((_, i) => d.irpj[i] + d.csll[i] + d.pis[i] + d.cofins[i] + d.difal[i] + d.icms[i]);
-  const somaImpostos = totalImpostos.reduce((a, b) => a + b, 0);
-  const somaReceita = d.receitaBruta.reduce((a, b) => a + b, 0);
-  const pctMedio = somaReceita ? (somaImpostos / somaReceita * 100) : 0;
+  const totalImpostosKmno = d.irpj.map((_, i) => d.irpj[i] + d.csll[i] + d.pis[i] + d.cofins[i] + d.difal[i] + d.icms[i]);
 
-  const cardsEl = document.getElementById('impostosResumoCards');
-  if (cardsEl) {
-    cardsEl.innerHTML = `
-      <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Receita Bruta (acumulado)</div><div class="grupo-dfc-card-val">${fmtBRL(somaReceita)}</div></div>
-      <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Total de Impostos (acumulado)</div><div class="grupo-dfc-card-val">${fmtBRL(somaImpostos)}</div></div>
-      <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Impostos / Receita (%, média)</div><div class="grupo-dfc-card-val">${pctMedio.toFixed(1)}%</div></div>
-    `;
-  }
-
-  // Tabela detalhe mensal
-  const header = document.getElementById('impostosDetalheHeader');
-  if (header) header.innerHTML = '<th>Categoria</th>' + IMPOSTOS_KMNO_MESES.map(m => `<th class="num">${m}</th><th class="num total-pct">AV%</th>`).join('');
   // NOVO (01/09/2026): Simples Nacional (DAS) real de RT e Novah, ao
   // vivo, tagueado por empresa no proprio rotulo (pedido Lucas). Usa a
   // MESMA lista de meses da tabela (IMPOSTOS_KMNO_MESES) -- meses sem
@@ -14077,17 +14085,48 @@ function renderImpostosView() {
   const dasRt = chavesMeses.map(k => dasRtPorMes[k] ?? null);
   const dasNovah = chavesMeses.map(k => dasNovahPorMes[k] ?? null);
 
+  // Soma por mês só do que estiver selecionado (null + null = null, não zero,
+  // pra manter o "—" quando nenhuma empresa selecionada tem dado no mês).
+  const somaSeSelecionado = (i) => {
+    let soma = null;
+    if (mostraKmno) soma = (soma ?? 0) + totalImpostosKmno[i];
+    if (mostraRt && dasRt[i] !== null) soma = (soma ?? 0) + dasRt[i];
+    if (mostraNovah && dasNovah[i] !== null) soma = (soma ?? 0) + dasNovah[i];
+    return soma;
+  };
+  const totalImpostosSel = totalImpostosKmno.map((_, i) => somaSeSelecionado(i));
+  const receitaBrutaSel = mostraKmno ? d.receitaBruta : d.receitaBruta.map(() => null);
+
+  const somaImpostos = totalImpostosSel.reduce((a, b) => a + (b ?? 0), 0);
+  const somaReceita = receitaBrutaSel.reduce((a, b) => a + (b ?? 0), 0);
+  const pctMedio = somaReceita ? (somaImpostos / somaReceita * 100) : 0;
+
+  const cardsEl = document.getElementById('impostosResumoCards');
+  if (cardsEl) {
+    cardsEl.innerHTML = `
+      <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Receita Bruta (acumulado)</div><div class="grupo-dfc-card-val">${mostraKmno ? fmtBRL(somaReceita) : '—'}</div></div>
+      <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Total de Impostos (acumulado)</div><div class="grupo-dfc-card-val">${fmtBRL(somaImpostos)}</div></div>
+      <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Impostos / Receita (%, média)</div><div class="grupo-dfc-card-val">${mostraKmno ? pctMedio.toFixed(1) + '%' : '—'}</div></div>
+    `;
+  }
+
+  // Tabela detalhe mensal
+  const header = document.getElementById('impostosDetalheHeader');
+  if (header) header.innerHTML = '<th>Categoria</th>' + IMPOSTOS_KMNO_MESES.map(m => `<th class="num">${m}</th><th class="num total-pct">AV%</th>`).join('');
+
   const linhas = [
-    ['Receita Bruta — KMNO', d.receitaBruta],
-    ['IRPJ Presumido (15%) — KMNO', d.irpj],
-    ['CSLL Presumido (9%) — KMNO', d.csll],
-    ['PIS Presumido (0,65%) — KMNO', d.pis],
-    ['COFINS Presumido (3%) — KMNO', d.cofins],
-    ['Difal (2%) — KMNO', d.difal],
-    ['ICMS (3%) — KMNO', d.icms],
-    ['Total de Impostos — KMNO', totalImpostos],
-    ['Simples Nacional (DAS) — RT', dasRt],
-    ['Simples Nacional (DAS) — NOVAH', dasNovah],
+    ...(mostraKmno ? [
+      ['Receita Bruta — KMNO', d.receitaBruta],
+      ['IRPJ Presumido (15%) — KMNO', d.irpj],
+      ['CSLL Presumido (9%) — KMNO', d.csll],
+      ['PIS Presumido (0,65%) — KMNO', d.pis],
+      ['COFINS Presumido (3%) — KMNO', d.cofins],
+      ['Difal (2%) — KMNO', d.difal],
+      ['ICMS (3%) — KMNO', d.icms],
+      ['Total de Impostos — KMNO', totalImpostosKmno],
+    ] : []),
+    ...(mostraRt ? [['Simples Nacional (DAS) — RT', dasRt]] : []),
+    ...(mostraNovah ? [['Simples Nacional (DAS) — NOVAH', dasNovah]] : []),
   ];
   // AV% — Análise Vertical (pedido reunião 27/07: "revisar AV%, precisa
   // ter em todo painel de informações"). Dado já é um array fixo
@@ -15523,6 +15562,13 @@ function renderForSelectedMonth() {
     } catch (e) { console.error('renderVendasFaturamento falhou:', e); }
   })();
   try { renderSaidasEntradasPecasTudo(); } catch (e) { console.error('renderSaidasEntradasPecasTudo falhou:', e); }
+  // FIX 08/09/2026 (pedido Lucas): "Impostos" agora segue o seletor de
+  // empresa (ver renderImpostosView), mas só re-renderizava ao trocar
+  // de aba -- se o usuário já estivesse na aba Impostos e mudasse a
+  // empresa no seletor do topo, a tabela ficava com o dado antigo até
+  // sair e voltar na aba. Chamando aqui também garante atualização em
+  // tempo real, igual às outras views desta função.
+  try { renderImpostosView(); } catch (e) { console.error('renderImpostosView falhou:', e); }
 }
 
 // Preenche a view "Resumo Consolidado": números de DRE (competência) e DFC (caixa)
@@ -20878,6 +20924,19 @@ function renderGrupoResumoDetalhadoCopia(monthStart, monthEnd, headerId, bodyId)
   // empresas (1 empresa já tem tratamento próprio via renderTesteLinhas),
   // então esse filtro só afeta a tela real "DRE por Competência".
   const empresaUnicaResumo = (selectedCompanyKeys && selectedCompanyKeys.length === 1) ? selectedCompanyKeys[0] : null;
+  // FIX 08/09/2026 (pedido Lucas, item 7 docx 04/09): com 2+ empresas
+  // marcadas no seletor (nem 0 = "Todas", nem 1 = individual), o card
+  // caía sempre no congelado RESUMO_DETALHADO_MESES_DRE (Grupo fixo de
+  // TODAS as empresas) OU em buildResumoDetalhadoMesAoVivo sem filtro
+  // nenhum -- ignorando quais 2 estavam de fato selecionadas. Agora, com
+  // 2+ (e menos que o total de empresas existentes), usa a lista real
+  // pra somar só as marcadas nos meses ao vivo (Jun/2026+); meses
+  // congelados (Jan-Mai) não têm dado por combinação parcial de
+  // empresas -- ficam "-----" nesse caso, mesma regra já usada pra RT.
+  const TODAS_EMPRESAS_RESUMO = ['KMNO', 'RT', 'NOVAH'];
+  const empresasParcialSelecionadas = (selectedCompanyKeys && selectedCompanyKeys.length >= 2 && selectedCompanyKeys.length < TODAS_EMPRESAS_RESUMO.length)
+    ? selectedCompanyKeys
+    : null;
 
   const meses = [];
   let cursor = monthStart.startOf('month');
@@ -20906,6 +20965,13 @@ function renderGrupoResumoDetalhadoCopia(monthStart, monthEnd, headerId, bodyId)
         || (!m.isBefore(EXCEL_CONGELADO_ATE) && categoriesCache && movementsCache
           ? buildResumoDetalhadoMesAoVivo(categoriesCache, movementsCache, m, m.add(1, 'month'), empresaUnicaResumo)
           : null);
+    }
+    if (empresasParcialSelecionadas) {
+      // Sem congelado pra combinação parcial (ex: RT+NOVAH) — só existe
+      // dado ao vivo, igual já valia pra RT sozinha.
+      return (!m.isBefore(EXCEL_CONGELADO_ATE) && categoriesCache && movementsCache
+        ? buildResumoDetalhadoMesAoVivo(categoriesCache, movementsCache, m, m.add(1, 'month'), empresasParcialSelecionadas)
+        : null);
     }
     return RESUMO_DETALHADO_MESES_DRE[chave]
       || (!m.isBefore(EXCEL_CONGELADO_ATE) && categoriesCache && movementsCache
