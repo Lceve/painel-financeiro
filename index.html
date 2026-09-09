@@ -3633,6 +3633,94 @@
     </div>
   </div>
 
+  <!-- ===== VIEW: FATURADOR (pendencia-faturador-no-dashboard, 09/09/2026) =====
+       Só visível pra admin (ver getSideNavItems). Área de visualização +
+       configuração do faturador-auto-diario.js (KMNO) — sem botões de ação
+       manual (criar/faturar/cancelar), isso já roda sozinho via cron na VPS.
+       Lê/grava direto no Supabase da KMNO (supabaseKmno, projeto
+       enedbeguahicctwwhpmb — diferente do DASHBOARD/consolidado usado no
+       resto do painel). Tabela faturador_config ainda não existe no Supabase
+       (pendente, precisa ser criada manualmente antes do formulário
+       funcionar) — o histórico (faturador_auto_log) já existe e funciona. ===== -->
+  <div id="viewFaturador" class="view-container">
+    <div class="blocks-inner">
+      <div class="btn-back-container">
+        <button class="btn-back" onclick="switchView('viewMenu')">← Voltar para o Menu</button>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <h2>Faturador (KMNO)</h2>
+        </div>
+
+        <!-- Temporizador até a próxima rodada automática (pedido 09/09/2026).
+             Cron real: 40 */3 * * * (UTC) — roda de 3 em 3h no minuto 40:
+             00:40, 03:40, 06:40... em UTC, que em horário de Brasília
+             (UTC-3, sem horário de verão) é 21:40, 00:40, 03:40... Contagem
+             é aproximada de propósito ("não precisa ser perfeito"). -->
+        <div class="bloco-card" style="margin-bottom:16px;">
+          <div class="bloco-body" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+            <div>Próxima checagem de pedidos elegíveis em:</div>
+            <div id="faturadorProximaRodadaTimer" style="font-size:20px;font-weight:700;color:var(--blue-belt-light);">—</div>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--bone-dim);margin:-12px 0 16px;">O cron dispara a cada 3h, mas só essa checagem diária decide pedidos novos — as demais só confirmam que já rodou hoje.</div>
+
+        <div class="bloco-card">
+          <div class="bloco-head"><div class="bloco-titulo">Configuração</div></div>
+          <div class="bloco-body">
+            <div class="req-error" id="faturadorConfigError"></div>
+            <div class="req-success" id="faturadorConfigSuccess"></div>
+            <div id="faturadorConfigForm">Carregando configuração...</div>
+          </div>
+        </div>
+
+        <div class="bloco-card" style="margin-top:16px;">
+          <div class="bloco-head"><div class="bloco-titulo">Log de alterações da configuração</div></div>
+          <div class="bloco-body">
+            <div class="dre-tbl-wrap" style="max-height:260px;overflow-y:auto;">
+              <table class="fin-tbl" id="faturadorConfigHistoricoTabela">
+                <tr>
+                  <th>Quando</th>
+                  <th>Quem</th>
+                  <th>O que mudou</th>
+                </tr>
+                <tr><td colspan="3">Carregando log...</td></tr>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="bloco-card" style="margin-top:16px;">
+          <div class="bloco-head"><div class="bloco-titulo">Histórico de execuções</div></div>
+          <div class="bloco-body">
+            <!-- Pedido 09/09/2026: 1 card só. Cabeçalho fixo (thead), corpo
+                 (tbody) com altura calculada pra caber ~5 linhas visíveis
+                 sem rolar; o resto do mês fica dentro do mesmo scroll. -->
+            <div class="dre-tbl-wrap" style="max-height:260px;overflow-y:auto;">
+              <table class="fin-tbl fin-tbl-sticky-col" id="faturadorLogTabela">
+                <thead>
+                  <tr>
+                    <th>Data</th>
+                    <th>Status</th>
+                    <th class="num">Nº Consolidado</th>
+                    <th class="num">Pedidos Originais</th>
+                    <th class="num">Valor Total</th>
+                    <th>E-mail Enviado</th>
+                    <th>Erro</th>
+                  </tr>
+                </thead>
+                <tbody id="faturadorLogTabelaBody">
+                  <tr><td colspan="7">Carregando histórico...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== VIEW: IMPOSTOS E ANÁLISES (novo card, reunião 21.07) =====
        Fonte: planilha "Impostos Analise KMNO" (só KMNO por enquanto — é
        a única empresa com essa aba na planilha original). Valores
@@ -3963,6 +4051,7 @@ const VIEW_DISPLAY_NAMES = {
   viewOutrosPendentes: 'Validação de Categorias',
   viewExtras: 'Financiamentos & Inadimplência',
   viewDreCmc: 'DRE por CMC',
+  viewFaturador: 'Faturador',
 };
 
 // ===== MENU LATERAL FIXO (pedido 27/08/2026) =====
@@ -3980,11 +4069,23 @@ const SIDE_NAV_ITEMS = [
   { viewId: 'viewIndicadores', label: 'Indicadores' }
 ];
 
+// Item "Faturador" (pendencia-faturador-no-dashboard, 09/09/2026) — só visível
+// pra admin, igual o botão "Solicitações" já funciona (currentProfile.role).
+// Não fica em SIDE_NAV_ITEMS porque esse array é fixo pra todo mundo; aqui
+// montamos a lista de exibição por sessão, com o item extra quando aplicável.
+function getSideNavItems() {
+  const items = SIDE_NAV_ITEMS.slice();
+  if (currentProfile && currentProfile.role === 'admin') {
+    items.push({ viewId: 'viewFaturador', label: 'Faturador' });
+  }
+  return items;
+}
+
 function renderSideNav(activeViewId) {
   const nav = document.getElementById('sideNav');
   if (!nav) return;
   nav.innerHTML = '';
-  SIDE_NAV_ITEMS.forEach(item => {
+  getSideNavItems().forEach(item => {
     const isActive = activeViewId === item.viewId;
     const el = document.createElement('div');
     el.className = 'side-nav-item' + (isActive ? ' active' : '');
@@ -3997,6 +4098,12 @@ function renderSideNav(activeViewId) {
 function switchView(viewId, options = {}) {
   renderSideNav(viewId);
   const { fromPopState = false } = options;
+
+  // Sai da view Faturador → para o timer da próxima rodada (senão o
+  // interval continua rodando escondido mesmo com a tela fora de vista).
+  if (viewId !== 'viewFaturador') {
+    try { pararTimerProximaRodadaFaturador(); } catch (e) { /* função pode não existir ainda no primeiro load */ }
+  }
 
   // 1. Esconde todas as views ativas
   document.querySelectorAll('.view-container').forEach(view => {
@@ -4055,6 +4162,18 @@ function switchView(viewId, options = {}) {
   // (dado pode ter sido editado por outra pessoa desde a última visita).
   if (viewId === 'viewIndicadores') {
     try { renderIndicadores(); } catch (e) { console.error('renderIndicadores falhou:', e); }
+  }
+
+  // Faturador: só admin acessa (view nem aparece no menu pra quem não é),
+  // mas troca de rota ainda é possível via URL direta — a checagem de
+  // renderSideNav/getSideNavItems não bloqueia isso. Confere de novo aqui.
+  if (viewId === 'viewFaturador') {
+    if (!currentProfile || currentProfile.role !== 'admin') {
+      alert('Acesso restrito a administradores.');
+      switchView('viewMenu');
+    } else {
+      try { renderFaturador(); } catch (e) { console.error('renderFaturador falhou:', e); }
+    }
   }
 
   // Validação de Categorias: lê direto de DRE_ARVORE_BLOCOS (estático, já
@@ -4159,6 +4278,16 @@ const DASHBOARD = {
 const supabaseClient = supabase.createClient(DASHBOARD.url, DASHBOARD.anonKey);
 let currentSession = null;
 let currentProfile = null;
+
+// Cliente separado pro Supabase da KMNO (projeto enedbeguahicctwwhpmb) — usado
+// só pela view "Faturador" (pedencia-faturador-no-dashboard), que lê/grava
+// faturador_auto_log e faturador_config. Base diferente do DASHBOARD acima
+// (projeto consolidado), então precisa de client próprio. Só chave anon aqui
+// (nunca service_role no front) — RLS na tabela controla o acesso real.
+const supabaseKmno = supabase.createClient(
+  'https://enedbeguahicctwwhpmb.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVuZWRiZWd1YWhpY2N0d3docG1iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1NDcyMTcsImV4cCI6MjA5NDEyMzIxN30._z3k4QZP7xxmjZsQaA-1HT_c_enSLqPYC9P253QGeik'
+);
 // O Supabase dispara onAuthStateChange (TOKEN_REFRESHED/INITIAL_SESSION/SIGNED_IN)
 // toda vez que a aba volta a ter foco (alt-tab, troca de aba, clique) — não só no
 // login de verdade. Sem essa trava, showDashboard() rodava de novo a cada foco,
@@ -5140,6 +5269,322 @@ async function editarIndicadorManual(chave, empresaId, campo, label) {
 // gráfico de barras (KMNO/Novah/RT, valor "Real" atual) em vez de
 // linha filho — período ainda não definido, formato "coringa" (pedido
 // 19/08: "não sei o período, deixa meio coringa, formato da imagem").
+// ===== VIEW FATURADOR (pendencia-faturador-no-dashboard, 09/09/2026) =====
+// Lê direto do Supabase da KMNO (supabaseKmno) — projeto separado do
+// DASHBOARD/consolidado usado no resto do painel. Duas tabelas:
+//   faturador_auto_log   — já existe, alimentada pelo cron na VPS a cada
+//                          rodada (ver pendencia-faturador-kmno).
+//   faturador_config     — AINDA NÃO EXISTE no Supabase (pendência em
+//                          aberto). Até ser criada, o formulário mostra
+//                          aviso em vez de quebrar a tela inteira.
+async function renderFaturador() {
+  await Promise.all([renderFaturadorLog(), renderFaturadorConfig(), renderFaturadorConfigHistorico()]);
+  iniciarTimerProximaRodadaFaturador();
+}
+
+// Temporizador até a próxima rodada do cron (pedido 09/09/2026 — "não
+// precisa ser perfeito"). Cron real na VPS: 40 */3 * * * em UTC. Calcula
+// o próximo horário HH:40 (UTC) múltiplo de 3h a partir de agora, e conta
+// regressivo em tempo real. Um só interval global — se a pessoa entrar na
+// view de novo, o anterior é limpo antes de criar outro (evita empilhar
+// timers rodando à toa em segundo plano).
+let faturadorTimerInterval = null;
+
+function pararTimerProximaRodadaFaturador() {
+  if (faturadorTimerInterval) {
+    clearInterval(faturadorTimerInterval);
+    faturadorTimerInterval = null;
+  }
+}
+
+function calcularProximaRodadaFaturador() {
+  // Ajustado 09/09/2026: das 8 disparadas do cron (a cada 3h), só a das
+  // 00:40 UTC de fato decide algo novo — as outras 7 só conferem "já
+  // rodei hoje?" no Supabase e desistem sem chamar a Omie (ver main() em
+  // faturador-auto-diario.js: early-return se já existe log do dia).
+  // Por isso o timer mira só nessa rodada real, não em qualquer uma das 8.
+  const agora = new Date();
+  const proxima = new Date(agora);
+  proxima.setUTCHours(0, 40, 0, 0);
+  if (proxima <= agora) {
+    proxima.setUTCDate(proxima.getUTCDate() + 1);
+  }
+  return proxima;
+}
+
+function iniciarTimerProximaRodadaFaturador() {
+  pararTimerProximaRodadaFaturador();
+  const el = document.getElementById('faturadorProximaRodadaTimer');
+  if (!el) return;
+
+  const atualizar = () => {
+    // Se a view foi trocada e o elemento não existe mais, para o timer.
+    const elAtual = document.getElementById('faturadorProximaRodadaTimer');
+    if (!elAtual) { pararTimerProximaRodadaFaturador(); return; }
+    const proxima = calcularProximaRodadaFaturador();
+    const diffMs = proxima - new Date();
+    if (diffMs <= 0) { elAtual.textContent = 'agora'; return; }
+    const totalSeg = Math.floor(diffMs / 1000);
+    const horas = Math.floor(totalSeg / 3600);
+    const min = Math.floor((totalSeg % 3600) / 60);
+    const seg = totalSeg % 60;
+    elAtual.textContent = `${String(horas).padStart(2, '0')}:${String(min).padStart(2, '0')}:${String(seg).padStart(2, '0')}`;
+  };
+  atualizar();
+  faturadorTimerInterval = setInterval(atualizar, 1000);
+}
+
+async function renderFaturadorLog() {
+  const tbody = document.getElementById('faturadorLogTabelaBody');
+  if (!tbody) return;
+  const { data, error } = await supabaseKmno
+    .from('faturador_auto_log')
+    .select('*')
+    .order('data_execucao', { ascending: false })
+    .limit(60);
+
+  if (error) {
+    console.error('renderFaturadorLog falhou:', error);
+    tbody.innerHTML = `<tr><td colspan="7">Erro ao carregar histórico: ${error.message}</td></tr>`;
+    return;
+  }
+  if (!data || data.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7">Nenhum registro encontrado.</td></tr>`;
+    return;
+  }
+
+  const statusLabel = {
+    sem_pedidos_elegiveis: 'Sem pedidos elegíveis',
+    sucesso: 'Sucesso',
+    erro: 'Erro',
+  };
+  const linhaHtml = row => {
+    const dataFmt = row.data_execucao ? dayjs(row.data_execucao).format('DD/MM/YYYY') : '—';
+    const status = statusLabel[row.status] || row.status || '—';
+    const valor = row.valor_total != null ? row.valor_total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—';
+    const email = row.email_enviado ? 'Sim' : 'Não';
+    const erro = row.detalhe_erro || (row.etapa_erro ? `Falhou em: ${row.etapa_erro}` : '—');
+    return `
+      <tr>
+        <td>${dataFmt}</td>
+        <td>${status}</td>
+        <td class="num">${row.numero_consolidado ?? '—'}</td>
+        <td class="num">${row.quantidade_pedidos_originais ?? '—'}</td>
+        <td class="num">${valor}</td>
+        <td>${email}</td>
+        <td>${erro}</td>
+      </tr>
+    `;
+  };
+
+  // Pedido 09/09/2026: 1 card só, 1 tabela só. As 5 primeiras linhas
+  // (mais recentes) ficam visíveis de cara porque o container tem altura
+  // fixa (~260px, ver CSS inline no HTML) suficiente pra caber 5 linhas;
+  // o resto do mês fica dentro do mesmo scroll, sem tabela separada.
+  tbody.innerHTML = data.map(linhaHtml).join('');
+}
+
+// Campos do formulário — rótulo amigável + tipo, na ordem em que aparecem.
+// Listas (emails_destino, categorias_excluidas) usam textarea, um item por
+// linha — pedido 09/09/2026: "precisa ser simples", nada de UI de tags.
+const FATURADOR_CONFIG_CAMPOS = [
+  { key: 'pausado', label: 'Pausado (não roda nenhuma consolidação)', tipo: 'checkbox' },
+  { key: 'meta_mensal_reais', label: 'Valor Mensal Máximo (R$)', tipo: 'number' },
+  { key: 'limite_notas_mes', label: 'Limite de Notas por Mês', tipo: 'number' },
+  { key: 'multiplicador_preco', label: 'Multiplicador de Preço (ex: 2 = dobro da tabela)', tipo: 'number' },
+  { key: 'data_corte_pedidos', label: 'Data de Corte dos Pedidos Elegíveis', tipo: 'date' },
+  { key: 'emails_destino', label: 'E-mails de Destino (um por linha)', tipo: 'lista' },
+  { key: 'categorias_excluidas', label: 'Categorias/Produtos Excluídos (um por linha)', tipo: 'lista' },
+];
+
+let faturadorConfigId = null; // guarda o id da linha pra saber o que fazer update
+let faturadorConfigAntes = null; // snapshot da config antes da edição atual, pra registrar no histórico
+
+async function renderFaturadorConfig() {
+  const wrap = document.getElementById('faturadorConfigForm');
+  const errEl = document.getElementById('faturadorConfigError');
+  const okEl = document.getElementById('faturadorConfigSuccess');
+  if (!wrap) return;
+  if (errEl) { errEl.textContent = ''; errEl.classList.remove('show'); }
+  if (okEl) { okEl.textContent = ''; okEl.classList.remove('show'); }
+
+  const { data, error } = await supabaseKmno
+    .from('faturador_config')
+    .select('*')
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    wrap.innerHTML = `<div class="req-error" style="display:block;">Configuração ainda não disponível — tabela <code>faturador_config</code> precisa ser criada no Supabase da KMNO.</div>`;
+    console.error('renderFaturadorConfig falhou:', error);
+    return;
+  }
+  if (!data) {
+    wrap.innerHTML = `<div class="req-error" style="display:block;">Nenhuma configuração encontrada. Tabela existe mas está vazia — precisa inserir a linha inicial.</div>`;
+    return;
+  }
+
+  faturadorConfigId = data.id;
+  faturadorConfigAntes = { ...data };
+
+  const camposHtml = FATURADOR_CONFIG_CAMPOS.map(campo => {
+    const valor = data[campo.key];
+    if (campo.tipo === 'checkbox') {
+      return `
+        <div style="margin-bottom:14px;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="checkbox" id="fatCfg-${campo.key}" ${valor ? 'checked' : ''}>
+            ${campo.label}
+          </label>
+        </div>
+      `;
+    }
+    if (campo.tipo === 'lista') {
+      const texto = Array.isArray(valor) ? valor.join('\n') : '';
+      return `
+        <div style="margin-bottom:14px;">
+          <label for="fatCfg-${campo.key}" style="display:block;margin-bottom:4px;font-weight:600;">${campo.label}</label>
+          <textarea id="fatCfg-${campo.key}" rows="4" style="width:100%;max-width:420px;font-family:inherit;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--navy-2);color:var(--bone);">${texto}</textarea>
+        </div>
+      `;
+    }
+    const tipoInput = campo.tipo === 'date' ? 'date' : (campo.tipo === 'number' ? 'number' : 'text');
+    const valorInput = campo.tipo === 'date' && valor ? dayjs(valor).format('YYYY-MM-DD') : (valor ?? '');
+    // Aviso de margem de segurança (pedido 09/09/2026): o fechamento real
+    // do consolidado raramente bate exato no valor configurado — varia
+    // pra mais ou pra menos. Só um aviso visual, não muda a lógica do
+    // faturador-auto-diario.js (que continua comparando contra o valor
+    // cheio, sem tolerância nenhuma no código).
+    let avisoMargem = '';
+    if (campo.key === 'meta_mensal_reais' && typeof valor === 'number') {
+      const min = (valor * 0.95).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      const max = (valor * 1.05).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      avisoMargem = `<div style="font-size:12px;color:var(--bone-dim);margin-top:4px;">Margem de segurança de 5%: o fechamento real costuma variar entre ${min} e ${max}.</div>`;
+    }
+    return `
+      <div style="margin-bottom:14px;">
+        <label for="fatCfg-${campo.key}" style="display:block;margin-bottom:4px;font-weight:600;">${campo.label}</label>
+        <input type="${tipoInput}" id="fatCfg-${campo.key}" value="${valorInput}" style="width:100%;max-width:280px;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--navy-2);color:var(--bone);">
+        ${avisoMargem}
+      </div>
+    `;
+  }).join('');
+
+  wrap.innerHTML = `
+    <form id="faturadorConfigFormEl" onsubmit="return salvarFaturadorConfig(event)">
+      ${camposHtml}
+      <button type="submit" id="faturadorConfigSalvarBtn" style="margin-top:8px;padding:8px 16px;border-radius:6px;border:none;background:var(--blue-belt-light);color:#04241d;font-weight:600;cursor:pointer;">Salvar configuração</button>
+      <span style="margin-left:12px;font-size:12px;color:var(--bone-dim);">Última atualização: ${data.atualizado_em ? dayjs(data.atualizado_em).format('DD/MM/YYYY HH:mm') : '—'}${data.atualizado_por ? ' por ' + data.atualizado_por : ''}</span>
+    </form>
+  `;
+}
+
+async function salvarFaturadorConfig(event) {
+  event.preventDefault();
+  const errEl = document.getElementById('faturadorConfigError');
+  const okEl = document.getElementById('faturadorConfigSuccess');
+  const btn = document.getElementById('faturadorConfigSalvarBtn');
+  if (errEl) { errEl.textContent = ''; errEl.classList.remove('show'); }
+  if (okEl) { okEl.textContent = ''; okEl.classList.remove('show'); }
+
+  // Trava de clique duplo (pedido 09/09/2026 — cliques repetidos rápidos
+  // empilhavam chamadas concorrentes e deixavam a tela "travada" por
+  // minutos). Desabilita assim que clica, só reabilita no fim (sucesso
+  // ou erro) — reabilita também dentro de renderFaturadorConfig, que
+  // recria o botão do zero, então não precisa reabilitar aqui no sucesso.
+  if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
+
+  const payload = {};
+  FATURADOR_CONFIG_CAMPOS.forEach(campo => {
+    const el = document.getElementById(`fatCfg-${campo.key}`);
+    if (!el) return;
+    if (campo.tipo === 'checkbox') {
+      payload[campo.key] = el.checked;
+    } else if (campo.tipo === 'number') {
+      payload[campo.key] = el.value === '' ? null : Number(el.value);
+    } else if (campo.tipo === 'lista') {
+      payload[campo.key] = el.value.split('\n').map(s => s.trim()).filter(Boolean);
+    } else {
+      payload[campo.key] = el.value || null;
+    }
+  });
+  payload.atualizado_em = new Date().toISOString();
+  payload.atualizado_por = currentSession?.user?.email || null;
+
+  const { error } = await supabaseKmno
+    .from('faturador_config')
+    .update(payload)
+    .eq('id', faturadorConfigId);
+
+  if (error) {
+    if (errEl) { errEl.textContent = `Erro ao salvar: ${error.message}`; errEl.classList.add('show'); }
+    console.error('salvarFaturadorConfig falhou:', error);
+    if (btn) { btn.disabled = false; btn.textContent = 'Salvar configuração'; }
+    return false;
+  }
+
+  // Log de segurança (pedido 09/09/2026): grava o "antes" e o "depois"
+  // sempre que alguém salva, pra investigar depois se um consolidado saiu
+  // errado por causa de config mexida. Falha nesse insert não deve travar
+  // o salvamento em si (a config já foi gravada com sucesso acima) — só
+  // avisa no console pra não passar despercebido.
+  const { error: erroHistorico } = await supabaseKmno
+    .from('faturador_config_historico')
+    .insert({
+      config_antes: faturadorConfigAntes,
+      config_depois: { ...faturadorConfigAntes, ...payload },
+      alterado_por: currentSession?.user?.email || null,
+      alterado_em: payload.atualizado_em,
+    });
+  if (erroHistorico) console.error('Não foi possível gravar o histórico de alteração da config:', erroHistorico);
+
+  if (okEl) { okEl.textContent = 'Configuração salva com sucesso.'; okEl.classList.add('show'); }
+  await renderFaturadorConfig();
+  await renderFaturadorConfigHistorico();
+  return false;
+}
+
+// Log de segurança de alterações (pedido 09/09/2026): só histórico, sem
+// botão de reverter — se precisar voltar como era, quem mexeu confere o
+// "antes" aqui e digita de novo manualmente.
+async function renderFaturadorConfigHistorico() {
+  const tbl = document.getElementById('faturadorConfigHistoricoTabela');
+  if (!tbl) return;
+  const { data, error } = await supabaseKmno
+    .from('faturador_config_historico')
+    .select('*')
+    .order('alterado_em', { ascending: false })
+    .limit(20);
+
+  tbl.querySelectorAll('tr:not(:first-child)').forEach(tr => tr.remove());
+  if (error) {
+    console.error('renderFaturadorConfigHistorico falhou:', error);
+    tbl.insertAdjacentHTML('beforeend', `<tr><td colspan="3">Log de alterações ainda não disponível — tabela <code>faturador_config_historico</code> precisa ser criada no Supabase da KMNO.</td></tr>`);
+    return;
+  }
+  if (!data || data.length === 0) {
+    tbl.insertAdjacentHTML('beforeend', `<tr><td colspan="3">Nenhuma alteração registrada ainda.</td></tr>`);
+    return;
+  }
+  const labelPorChave = Object.fromEntries(FATURADOR_CONFIG_CAMPOS.map(c => [c.key, c.label]));
+  data.forEach(row => {
+    const dataFmt = row.alterado_em ? dayjs(row.alterado_em).format('DD/MM/YYYY HH:mm') : '—';
+    const antes = row.config_antes || {};
+    const depois = row.config_depois || {};
+    const diffs = Object.keys(labelPorChave)
+      .filter(k => JSON.stringify(antes[k]) !== JSON.stringify(depois[k]))
+      .map(k => `<li><b>${labelPorChave[k]}:</b> ${JSON.stringify(antes[k])} → ${JSON.stringify(depois[k])}</li>`)
+      .join('');
+    tbl.insertAdjacentHTML('beforeend', `
+      <tr>
+        <td>${dataFmt}</td>
+        <td>${row.alterado_por || '—'}</td>
+        <td><ul style="margin:0;padding-left:18px;">${diffs || '<li>Nenhuma mudança detectada nos campos monitorados.</li>'}</ul></td>
+      </tr>
+    `);
+  });
+}
+
 async function renderIndicadores() {
   const wrap = document.getElementById('wrapIndicadores');
   if (!wrap) return;
