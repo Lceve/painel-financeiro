@@ -624,8 +624,11 @@
     white-space: nowrap;
   }
   /* Pedido 05/08: mesma coisa pra 1ª coluna da tabela "Detalhe Mensal"
-     (Impostos e Análises) — "IRPJ Presumido (15%)" quebrando em 3 linhas. */
-  #impostosDetalheHeader th:first-child, #impostosDetalheBody td:first-child {
+     (Impostos e Análises) — "IRPJ Presumido (15%)" quebrando em 3 linhas.
+     FIX 08/09/2026: tabela virou dinâmica (1 por empresa, sem ID fixo,
+     dentro de #impostosBlocosContainer) -- seletor trocado de ID pra
+     container, continua valendo pra qualquer nº de blocos clonados. */
+  #impostosBlocosContainer th:first-child, #impostosBlocosContainer td:first-child {
     min-width: 200px;
     white-space: nowrap;
   }
@@ -3649,25 +3652,23 @@
           <h2>Impostos e Análises</h2>
         </div>
 
-        <div class="grupo-dfc-cards" id="impostosResumoCards"></div>
-
         <div class="chart-card-title" style="margin-top:18px;">Impostos x Receita Bruta — mês a mês (KMNO, R$)</div>
         <div style="position: relative; height: 280px;">
           <canvas id="chartImpostosReceita" role="img" aria-label="Gráfico de barras empilhadas mostrando cada imposto mês a mês, com linha de receita bruta">Impostos x Receita Bruta mês a mês.</canvas>
         </div>
 
-        <div class="bloco-card" style="margin-top:18px;">
-          <div class="bloco-head"><div class="bloco-titulo">Detalhe mensal</div></div>
-          <div class="bloco-body">
-            <div class="dre-tbl-wrap">
-              <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col" id="impostosDetalheTbl">
-                <tr id="impostosDetalheHeader"><th>Categoria</th></tr>
-                <tbody id="impostosDetalheBody"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <!-- FIX 08/09/2026 (pedido Lucas): os 3 cards de resumo +
+             tabela "Detalhe mensal" viraram um container dinâmico --
+             renderImpostosView() agora gera 1 bloco completo (cards +
+             tabela) POR EMPRESA selecionada no seletor do topo, cada
+             um com o nome da empresa no título ("Detalhe Mensal —
+             KMNO", "Detalhe Mensal — RT" etc). Antes era 1 único
+             conjunto fixo (impostosResumoCards/impostosDetalheTbl)
+             sempre misturando as empresas juntas. -->
+        <div id="impostosBlocosContainer" style="margin-top:18px;"></div>
       </div>
+
+
     </div>
   </div>
 
@@ -14053,19 +14054,15 @@ function renderImpostosView() {
 
   // FIX 08/09/2026 (pedido Lucas): essa view ignorava totalmente o
   // seletor de empresa do topo -- sempre mostrava KMNO detalhado + DAS
-  // RT + DAS Novah juntos, direto. Agora respeita selectedCompanyKeys:
-  // só a(s) empresa(s) marcada(s) aparece(m), e com 2+ marcadas os
-  // cards de resumo somam só as selecionadas.
+  // RT + DAS Novah juntos, direto. Depois corrigido pra somar só as
+  // selecionadas num bloco único. Agora (2º pedido, mesma sessão): em
+  // vez de somar, CLONA o bloco inteiro (3 cards + tabela "Detalhe
+  // Mensal") -- 1 bloco completo por empresa selecionada, cada um com
+  // o nome dela no título ("Detalhe Mensal — KMNO", "— RT", etc), em
+  // vez de 1 bloco só somando tudo junto.
   const empresasSelImpostos = (selectedCompanyKeys && selectedCompanyKeys.length)
     ? selectedCompanyKeys
-    : ['KMNO', 'RT', 'NOVAH']; // nenhuma seleção = "Todas as Empresas", mesmo comportamento de antes
-  const mostraKmno = empresasSelImpostos.includes('KMNO');
-  const mostraRt = empresasSelImpostos.includes('RT');
-  const mostraNovah = empresasSelImpostos.includes('NOVAH');
-
-  // Cards de resumo: total de cada imposto no acumulado exibido, e %
-  // médio sobre a receita bruta.
-  const totalImpostosKmno = d.irpj.map((_, i) => d.irpj[i] + d.csll[i] + d.pis[i] + d.cofins[i] + d.difal[i] + d.icms[i]);
+    : ['KMNO', 'RT', 'NOVAH']; // nenhuma seleção = "Todas as Empresas": 1 bloco pra cada uma das 3
 
   // NOVO (01/09/2026): Simples Nacional (DAS) real de RT e Novah, ao
   // vivo, tagueado por empresa no proprio rotulo (pedido Lucas). Usa a
@@ -14082,62 +14079,64 @@ function renderImpostosView() {
     const meses = [8,9,10,11,12,1,2,3,4,5,6,7,8];
     return `${anos[i]}-${String(meses[i]).padStart(2,'0')}`;
   });
+  const totalImpostosKmno = d.irpj.map((_, i) => d.irpj[i] + d.csll[i] + d.pis[i] + d.cofins[i] + d.difal[i] + d.icms[i]);
   const dasRt = chavesMeses.map(k => dasRtPorMes[k] ?? null);
   const dasNovah = chavesMeses.map(k => dasNovahPorMes[k] ?? null);
 
-  // Soma por mês só do que estiver selecionado (null + null = null, não zero,
-  // pra manter o "—" quando nenhuma empresa selecionada tem dado no mês).
-  const somaSeSelecionado = (i) => {
-    let soma = null;
-    if (mostraKmno) soma = (soma ?? 0) + totalImpostosKmno[i];
-    if (mostraRt && dasRt[i] !== null) soma = (soma ?? 0) + dasRt[i];
-    if (mostraNovah && dasNovah[i] !== null) soma = (soma ?? 0) + dasNovah[i];
-    return soma;
+  // Dados de cada empresa isolados (sem soma entre elas) -- cada bloco
+  // usa só a fatia que é dele.
+  const DADOS_POR_EMPRESA_IMPOSTOS = {
+    KMNO: { receitaBruta: d.receitaBruta, totalImpostos: totalImpostosKmno, temDetalhe: true },
+    RT: { receitaBruta: null, totalImpostos: dasRt, temDetalhe: false },
+    NOVAH: { receitaBruta: null, totalImpostos: dasNovah, temDetalhe: false },
   };
-  const totalImpostosSel = totalImpostosKmno.map((_, i) => somaSeSelecionado(i));
-  const receitaBrutaSel = mostraKmno ? d.receitaBruta : d.receitaBruta.map(() => null);
-
-  const somaImpostos = totalImpostosSel.reduce((a, b) => a + (b ?? 0), 0);
-  const somaReceita = receitaBrutaSel.reduce((a, b) => a + (b ?? 0), 0);
-  const pctMedio = somaReceita ? (somaImpostos / somaReceita * 100) : 0;
-
-  const cardsEl = document.getElementById('impostosResumoCards');
-  if (cardsEl) {
-    cardsEl.innerHTML = `
-      <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Receita Bruta (acumulado)</div><div class="grupo-dfc-card-val">${mostraKmno ? fmtBRL(somaReceita) : '—'}</div></div>
-      <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Total de Impostos (acumulado)</div><div class="grupo-dfc-card-val">${fmtBRL(somaImpostos)}</div></div>
-      <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Impostos / Receita (%, média)</div><div class="grupo-dfc-card-val">${mostraKmno ? pctMedio.toFixed(1) + '%' : '—'}</div></div>
-    `;
-  }
-
-  // Tabela detalhe mensal
-  const header = document.getElementById('impostosDetalheHeader');
-  if (header) header.innerHTML = '<th>Categoria</th>' + IMPOSTOS_KMNO_MESES.map(m => `<th class="num">${m}</th><th class="num total-pct">AV%</th>`).join('');
-
-  const linhas = [
-    ...(mostraKmno ? [
-      ['Receita Bruta — KMNO', d.receitaBruta],
-      ['IRPJ Presumido (15%) — KMNO', d.irpj],
-      ['CSLL Presumido (9%) — KMNO', d.csll],
-      ['PIS Presumido (0,65%) — KMNO', d.pis],
-      ['COFINS Presumido (3%) — KMNO', d.cofins],
-      ['Difal (2%) — KMNO', d.difal],
-      ['ICMS (3%) — KMNO', d.icms],
-      ['Total de Impostos — KMNO', totalImpostosKmno],
-    ] : []),
-    ...(mostraRt ? [['Simples Nacional (DAS) — RT', dasRt]] : []),
-    ...(mostraNovah ? [['Simples Nacional (DAS) — NOVAH', dasNovah]] : []),
+  const NOMES_LINHAS_DETALHE_KMNO = [
+    ['Receita Bruta — KMNO', d.receitaBruta],
+    ['IRPJ Presumido (15%) — KMNO', d.irpj],
+    ['CSLL Presumido (9%) — KMNO', d.csll],
+    ['PIS Presumido (0,65%) — KMNO', d.pis],
+    ['COFINS Presumido (3%) — KMNO', d.cofins],
+    ['Difal (2%) — KMNO', d.difal],
+    ['ICMS (3%) — KMNO', d.icms],
+    ['Total de Impostos — KMNO', totalImpostosKmno],
   ];
-  // AV% — Análise Vertical (pedido reunião 27/07: "revisar AV%, precisa
-  // ter em todo painel de informações"). Dado já é um array fixo
-  // mês a mês (sem período anterior fora do array), então compara só
-  // com o índice anterior dentro do próprio array — 1ª coluna fica "—".
-  const body = document.getElementById('impostosDetalheBody');
-  if (body) {
-    body.innerHTML = linhas.map(([label, vals]) => `
-      <tr${label === 'Total de Impostos' || label === 'Receita Bruta' ? ' style="font-weight:600;"' : ''}>
-        <td>${label}</td>${vals.map((v, i) => `<td class="num">${fmtBRL(v)}</td><td class="num total-pct">${i === 0 ? '—' : fmtPctVariacao(v, vals[i - 1])}</td>`).join('')}
-      </tr>`).join('');
+
+  const containerEl = document.getElementById('impostosBlocosContainer');
+  if (containerEl) {
+    containerEl.innerHTML = empresasSelImpostos.map(emp => {
+      const info = DADOS_POR_EMPRESA_IMPOSTOS[emp];
+      const somaImpostosEmp = info.totalImpostos.reduce((a, b) => a + (b ?? 0), 0);
+      const somaReceitaEmp = info.receitaBruta ? info.receitaBruta.reduce((a, b) => a + (b ?? 0), 0) : null;
+      const pctMedioEmp = somaReceitaEmp ? (somaImpostosEmp / somaReceitaEmp * 100) : null;
+
+      const linhasEmp = info.temDetalhe
+        ? NOMES_LINHAS_DETALHE_KMNO
+        : [[`Simples Nacional (DAS) — ${emp}`, info.totalImpostos]];
+
+      const headerHtml = '<th>Categoria</th>' + IMPOSTOS_KMNO_MESES.map(m => `<th class="num">${m}</th><th class="num total-pct">AV%</th>`).join('');
+      const bodyHtml = linhasEmp.map(([label, vals]) => `
+        <tr${label.startsWith('Total de Impostos') || label.startsWith('Receita Bruta') ? ' style="font-weight:600;"' : ''}>
+          <td>${label}</td>${vals.map((v, i) => `<td class="num">${fmtBRL(v)}</td><td class="num total-pct">${i === 0 ? '—' : fmtPctVariacao(v, vals[i - 1])}</td>`).join('')}
+        </tr>`).join('');
+
+      return `
+        <div class="grupo-dfc-cards" style="margin-top:18px;">
+          <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Receita Bruta — ${emp} (acumulado)</div><div class="grupo-dfc-card-val">${somaReceitaEmp != null ? fmtBRL(somaReceitaEmp) : '—'}</div></div>
+          <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Total de Impostos — ${emp} (acumulado)</div><div class="grupo-dfc-card-val">${fmtBRL(somaImpostosEmp)}</div></div>
+          <div class="grupo-dfc-card"><div class="grupo-dfc-card-label">Impostos / Receita — ${emp} (%, média)</div><div class="grupo-dfc-card-val">${pctMedioEmp != null ? pctMedioEmp.toFixed(1) + '%' : '—'}</div></div>
+        </div>
+        <div class="bloco-card" style="margin-top:10px;">
+          <div class="bloco-head"><div class="bloco-titulo">Detalhe Mensal — ${emp}</div></div>
+          <div class="bloco-body">
+            <div class="dre-tbl-wrap">
+              <table class="fin-tbl fin-tbl-mes-alt fin-tbl-sticky-col">
+                <tr>${headerHtml}</tr>
+                <tbody>${bodyHtml}</tbody>
+              </table>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
   }
 
   const canvas = document.getElementById('chartImpostosReceita');
