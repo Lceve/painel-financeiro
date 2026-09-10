@@ -16201,28 +16201,57 @@ function buildMetricasGrupoComExcel(categories, movements, monthStart, monthEnd,
   while (!cursor.isAfter(fim)) {
     const chave = cursor.format('YYYY-MM');
     if (empresa) {
-      const frozen = buildFrozenMetricasCompetenciaPorEmpresa(empresa, chave);
+      const frozen = buildResumoDetalhadoMesFrozenPorEmpresa(empresa, chave);
       if (frozen) {
-        campos.forEach(c => acumulado[c] += (frozen[c] || 0));
+        acumulado.receitaBruta += frozen.receita || 0;
+        acumulado.cmv += frozen.cmv || 0;
+        acumulado.margemContribuicao += frozen.margemContribuicao || 0;
+        acumulado.ebitda += frozen.ebitda || 0;
+        acumulado.saldoLiquido += frozen.saldoLiquido || 0;
         temDado = true;
       } else if (!cursor.isBefore(EXCEL_CONGELADO_ATE)) {
-        const metricasMes = buildMetricasGrupoDfc(empresa, categories, movements, cursor, cursor.endOf('month'));
-        campos.forEach(c => acumulado[c] += (metricasMes[c] || 0));
-        temDado = true;
+        // FIX 10/09/2026 (pedido Lucas: "tudo precisa bater com o card
+        // Resumo" -- mesmo fix já aplicado no lado Caixa, agora em
+        // Competência): trocado buildMetricasGrupoDfc (trilha antiga,
+        // calculada com árvore de blocos própria, sem passar por
+        // buildResumoCompetenciaViaArvoreNativa) por
+        // buildResumoDetalhadoMesAoVivo -- MESMA fonte usada pela
+        // Evolução Mensal dessa aba (linha ~21790) e pelo card
+        // "Resumo (Grupo, R$)" de Competência.
+        const r = buildResumoDetalhadoMesAoVivo(categories, movements, cursor, cursor.add(1, 'month'), empresa);
+        if (r) {
+          acumulado.receitaBruta += r.receita || 0;
+          acumulado.cmv += r.cmv || 0;
+          acumulado.margemContribuicao += r.margemContribuicao || 0;
+          acumulado.ebitda += r.ebitda || 0;
+          acumulado.saldoLiquido += r.saldoLiquido || 0;
+          temDado = true;
+        }
       }
     } else {
       // FIX 28/07: era EXCEL_HISTORICO_GRUPO_DFC (caixa) — esta função
       // alimenta o card "DRE por Competência", precisa do congelado de
       // competência (Grupo DRE), não do de caixa (Grupo DFC).
-      const congelado = EXCEL_HISTORICO_GRUPO_DRE[chave];
-      if (congelado) {
-        campos.forEach(c => acumulado[c] += (congelado[c] || 0));
+      const congeladoGrupo = RESUMO_DETALHADO_MESES_DRE[chave];
+      if (congeladoGrupo) {
+        acumulado.receitaBruta += congeladoGrupo.receita || 0;
+        acumulado.cmv += congeladoGrupo.cmv || 0;
+        acumulado.margemContribuicao += congeladoGrupo.margemContribuicao || 0;
+        acumulado.ebitda += congeladoGrupo.ebitda || 0;
+        acumulado.saldoLiquido += congeladoGrupo.saldoLiquido || 0;
         temDado = true;
       } else if (!cursor.isBefore(EXCEL_CONGELADO_ATE)) {
-        // Mês ao vivo (Jun/2026 em diante): recalcula só esse mês via Omie/Supabase.
-        const { grupo: grupoMes } = buildMetricasGrupoDfcPeriodo(categories, movements, cursor, cursor.endOf('month'));
-        campos.forEach(c => acumulado[c] += (grupoMes[c] || 0));
-        temDado = true;
+        // FIX 10/09/2026: mesmo motivo acima -- buildResumoDetalhadoMesAoVivo
+        // sem empresaFiltro já inclui RT (fix anterior desta sessão).
+        const r = buildResumoDetalhadoMesAoVivo(categories, movements, cursor, cursor.add(1, 'month'));
+        if (r) {
+          acumulado.receitaBruta += r.receita || 0;
+          acumulado.cmv += r.cmv || 0;
+          acumulado.margemContribuicao += r.margemContribuicao || 0;
+          acumulado.ebitda += r.ebitda || 0;
+          acumulado.saldoLiquido += r.saldoLiquido || 0;
+          temDado = true;
+        }
       }
     }
     cursor = cursor.add(1, 'month');
