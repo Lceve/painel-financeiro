@@ -11086,8 +11086,15 @@ function extrairMetricasResumo(rows) {
 // período (mês ou intervalo). Reaproveita buildTodosBlocosRealizado +
 // o builder de resumo waterfall já existente de cada empresa — não
 // duplica nenhuma fórmula de cálculo.
-function buildMetricasGrupoDfc(empresa, categories, movements, monthStart, monthEnd) {
-  const B = buildTodosBlocosRealizado(empresa, categories, movements, monthStart, monthEnd);
+// FIX 10/09/2026 (pedido Lucas): agora aceita e propaga `modo` (opcional,
+// default undefined = competência, comportamento antigo preservado) pra
+// buildTodosBlocosRealizado. Antes, quando chamada a partir do contexto
+// Caixa (buildMetricasGrupoDfcComExcel/buildMetricasGrupoDfcPeriodo pro
+// lado Caixa), calculava em modo indefinido mesmo estando na tela de
+// Caixa — causa raiz de divergência entre o card de Meta e o Resumo
+// (que sempre usa modo='caixa' corretamente via buildResumoCategoriasMes).
+function buildMetricasGrupoDfc(empresa, categories, movements, monthStart, monthEnd, modo) {
+  const B = buildTodosBlocosRealizado(empresa, categories, movements, monthStart, monthEnd, modo);
   const builder = DRE_ARVORE_RESUMO_BUILDERS[empresa];
   const rows = builder(B);
   return extrairMetricasResumo(rows);
@@ -16246,9 +16253,25 @@ function buildMetricasGrupoDfcComExcel(categories, movements, monthStart, monthE
         campos.forEach(c => acumulado[c] += (frozen[c] || 0));
         temDado = true;
       } else if (!cursor.isBefore(EXCEL_CONGELADO_ATE)) {
-        const metricasMes = buildMetricasGrupoDfc(empresa, categories, movements, cursor, cursor.endOf('month'));
-        campos.forEach(c => acumulado[c] += (metricasMes[c] || 0));
-        temDado = true;
+        // FIX 10/09/2026 (pedido Lucas: "tudo precisa bater com o card
+        // Resumo" -- reaplicando fix de 09/09/2026 que tinha se perdido):
+        // trocado buildMetricasGrupoDfc (trilha antiga, calculada com
+        // árvore de blocos própria) por getResumoEmpresaCaixaMes -- MESMA
+        // fonte usada pelo Resumo por Empresa e pela Evolução Mensal.
+        // Mapeamento de campo: receita→receitaBruta, margem→
+        // margemContribuicao (nomes diferentes entre as duas fontes,
+        // mesma grandeza). custosFixos/despesasFinanceiras/lucroLiquido/
+        // receitaLiquida não existem nesse retorno -- ficam 0 (o card de
+        // Meta só exibe os 5 campos mapeados abaixo).
+        const r = getResumoEmpresaCaixaMes(empresa, cursor, cursor.add(1, 'month'));
+        if (r) {
+          acumulado.receitaBruta += r.receita || 0;
+          acumulado.cmv += r.cmv || 0;
+          acumulado.margemContribuicao += r.margem || 0;
+          acumulado.ebitda += r.ebitda || 0;
+          acumulado.saldoLiquido += r.saldoLiquido || 0;
+          temDado = true;
+        }
       }
     } else {
       const congelado = EXCEL_HISTORICO_GRUPO_DFC[chave];
@@ -16256,9 +16279,17 @@ function buildMetricasGrupoDfcComExcel(categories, movements, monthStart, monthE
         campos.forEach(c => acumulado[c] += (congelado[c] || 0));
         temDado = true;
       } else if (!cursor.isBefore(EXCEL_CONGELADO_ATE)) {
-        const { grupo: grupoMes } = buildMetricasGrupoDfcPeriodo(categories, movements, cursor, cursor.endOf('month'));
-        campos.forEach(c => acumulado[c] += (grupoMes[c] || 0));
-        temDado = true;
+        // FIX 10/09/2026: mesmo motivo acima -- getDadoGrupoCaixaMes é a
+        // mesma fonte do card "Resumo (Grupo, R$)", já inclui RT.
+        const r = getDadoGrupoCaixaMes(cursor, cursor.add(1, 'month'));
+        if (r) {
+          acumulado.receitaBruta += r.receita || 0;
+          acumulado.cmv += r.cmv || 0;
+          acumulado.margemContribuicao += r.margemContribuicao || 0;
+          acumulado.ebitda += r.ebitda || 0;
+          acumulado.saldoLiquido += r.saldoLiquido || 0;
+          temDado = true;
+        }
       }
     }
     cursor = cursor.add(1, 'month');
@@ -16267,10 +16298,11 @@ function buildMetricasGrupoDfcComExcel(categories, movements, monthStart, monthE
   return acumulado;
 }
 
-function buildMetricasGrupoDfcPeriodo(categories, movements, monthStart, monthEnd) {
+// FIX 10/09/2026 (pedido Lucas): agora aceita e propaga `modo` (opcional).
+function buildMetricasGrupoDfcPeriodo(categories, movements, monthStart, monthEnd, modo) {
   const porEmpresa = {};
   GRUPO_DFC_EMPRESAS.forEach(emp => {
-    porEmpresa[emp] = buildMetricasGrupoDfc(emp, categories, movements, monthStart, monthEnd);
+    porEmpresa[emp] = buildMetricasGrupoDfc(emp, categories, movements, monthStart, monthEnd, modo);
   });
   const grupo = somarMetricas(GRUPO_DFC_EMPRESAS.map(emp => porEmpresa[emp]));
   return { porEmpresa, grupo };
@@ -20871,12 +20903,18 @@ function buildResumoDetalhadoMesAoVivo(categories, movements, monthStart, monthE
 
   const kmno = buildResumoCategoriasMes('KMNO', categories, movements, monthStart, monthEnd, modo, contasCache);
   const novah = buildResumoCategoriasMes('NOVAH', categories, movements, monthStart, monthEnd, modo, contasCache);
+  // FIX 10/09/2026 (pedido Lucas): RT entra na soma do Grupo (branch sem
+  // empresa filtrada) — antes só somava KMNO+NOVAH, mesmo RT já constando
+  // em GRUPO_DFC_EMPRESAS e sendo somado normalmente no card de Meta.
+  const rt = buildResumoCategoriasMes('RT', categories, movements, monthStart, monthEnd, modo, contasCache);
   const somaMapa = (m) => Object.values(m || {}).reduce((s, v) => s + v, 0);
-  const somaBucket = (chave) => somaMapa(kmno[chave]) + somaMapa(novah[chave]);
+  const somaBucket = (chave) => somaMapa(kmno[chave]) + somaMapa(novah[chave]) + somaMapa(rt[chave]);
 
   const kmnoRevendaMercadoria = Number((kmno.receita || {})['Clientes - Revenda de Mercadoria'] || 0);
   const kmnoReceitaTotal = somaMapa(kmno.receita);
-  let receitaProdutos = kmnoReceitaTotal - kmnoRevendaMercadoria;
+  // RT não separa Produtos/Mercadorias/Serviços (categoria única) — cai
+  // inteiro em receitaProdutos, mesmo critério do branch de 1 empresa.
+  let receitaProdutos = kmnoReceitaTotal - kmnoRevendaMercadoria + somaMapa(rt.receita);
   let receitaMercadorias = kmnoRevendaMercadoria;
   let receitaServicos = somaMapa(novah.receita);
 
@@ -20893,6 +20931,11 @@ function buildResumoDetalhadoMesAoVivo(categories, movements, monthStart, monthE
   // no mesmo total, pra não ficar inconsistente).
   // RESTAURADO 14/08/2026 (pedido explícito Lucas): "Recebimento" do
   // Grupo volta a bater com o Omie — soma KMNO+NOVAH oficial, sem descontar.
+  // NOTA 10/09/2026: RT não tem linha em orcamentoRealizadoCache (sem
+  // "Realizado" oficial pra RT nesse cache, mesma limitação do branch de
+  // 1 empresa). A receita de RT sempre entra pelo cálculo por categoria
+  // (somaMapa(rt.receita), já incluído acima em receitaProdutos), nunca
+  // pelo ramo "oficial".
   const mesChaveGrupo = monthStart.format('YYYY-MM');
   const kmnoOficialRow = orcamentoRealizadoCache[`KMNO|${mesChaveGrupo}`];
   const novahOficialRow = orcamentoRealizadoCache[`NOVAH|${mesChaveGrupo}`];
@@ -20928,9 +20971,9 @@ function buildResumoDetalhadoMesAoVivo(categories, movements, monthStart, monthE
   const custoServicos = somaBucket('custoServicos'); // só KMNO tem essa categoria separada — Novah retorna 0 naturalmente
   const custoMaoObra = somaBucket('custoMaoObra');
   // FIX 20/08/2026 (pedido Lucas): mesmo CMC automático do branch com
-  // empresaFiltro acima — soma KMNO+NOVAH (mesmo escopo do resto do
-  // Grupo, que não inclui RT nesse card).
-  const cmcAutomaticoGrupo = somaCmcVendasPeriodo('KMNO', monthStart, monthEnd) + somaCmcVendasPeriodo('NOVAH', monthStart, monthEnd);
+  // empresaFiltro acima — soma KMNO+NOVAH.
+  // FIX 10/09/2026: RT incluído também, junto com o resto do Grupo.
+  const cmcAutomaticoGrupo = somaCmcVendasPeriodo('KMNO', monthStart, monthEnd) + somaCmcVendasPeriodo('NOVAH', monthStart, monthEnd) + somaCmcVendasPeriodo('RT', monthStart, monthEnd);
   const cmv = custoInsumos + custoServicos + custoMaoObra + cmcAutomaticoGrupo;
   const royalties = somaBucket('royalties');
   const margemContribuicao = receitaLiquida - cmv - royalties;
@@ -20950,10 +20993,14 @@ function buildResumoDetalhadoMesAoVivo(categories, movements, monthStart, monthE
   // recebimentoEmprestimos entrou no Recebimento acima.
   const saldoLiquido = lucroLiquido - distribuicao - capex - refis + recebimentoEmprestimos - pagamentoEmprestimos;
   const saldoCaixa = saldoLiquido; // mantido só por compatibilidade — saldoLiquido já é o "de caixa" agora
-  const depreciacao = calcDepreciacao('KMNO', receitaProdutos + receitaMercadorias) + calcDepreciacao('NOVAH', receitaServicos); // Grupo = soma das 2 fórmulas individuais
+  // FIX 10/09/2026: RT incluído na depreciação do Grupo (calcDepreciacao
+  // já suporta RT — hoje RT tem 0% configurado, então soma zero, mas
+  // deixa pronto se a % mudar no futuro).
+  const depreciacao = calcDepreciacao('KMNO', receitaProdutos + receitaMercadorias) + calcDepreciacao('NOVAH', receitaServicos) + calcDepreciacao('RT', somaMapa(rt.receita)); // Grupo = soma das 3 fórmulas individuais
   const chavesComDetalhe = ['receita', 'impostos', 'devolucoes', 'custoInsumos', 'custoServicos', 'custoMaoObra', 'royalties', 'custoAdm', 'despesasComerciais', 'despesasFinanceiras', 'receitasFinanceiras', 'distribuicao', 'capex', 'refis', 'recebimentoEmprestimos', 'pagamentoEmprestimos'];
   const detalhes = {};
-  chavesComDetalhe.forEach(ch => { detalhes[ch] = mergeCategoriaMaps(kmno[ch] || {}, novah[ch] || {}); });
+  // FIX 10/09/2026: RT incluído no merge de detalhes (drill-down) também.
+  chavesComDetalhe.forEach(ch => { detalhes[ch] = mergeCategoriaMaps(kmno[ch] || {}, novah[ch] || {}, rt[ch] || {}); });
 
   return {
     receitaProdutos, receitaMercadorias, receitaServicos, receita, impostos, devolucoes, deducoes, receitaLiquida,
@@ -21174,38 +21221,13 @@ function getSaidasEntradaCaixaMes(empresaKey, m, fimMes) {
   return { entrada, saidas };
 }
 
-// FIX 18/08/2026 (pedido Lucas, achado real: "Evolução Mensal" com 1
-// empresa selecionada mostrava número DIFERENTE do "Resumo por
-// Empresa" pra mesma empresa/mês — mesmo bug do Grupo, só que no
-// branch de empresa única, que eu não tinha corrigido ainda). Usada
-// pelas 5 métricas do card "Evolução Mensal" (Faturamento/CMV/Margem/
-// EBITDA/Saldo Líquido), com OU sem empresa selecionada — sempre a
-// mesma fonte Caixa correta (financialMovementsCache + modo 'caixa'),
-// nunca mais movementsCache/buildMetricasGrupoDfc (competência).
-function getEvolucaoMensalMetricasCaixa(m, fimMes, empresaFiltro) {
-  const chave = m.format('YYYY-MM');
-  if (empresaFiltro) {
-    const frozen = buildFrozenMetricasCaixaPorEmpresa(empresaFiltro, chave);
-    if (frozen) return frozen; // já vem com receitaBruta/cmv/margemContribuicao/ebitda/saldoLiquido
-    if (m.isBefore(EXCEL_CONGELADO_ATE) || !categoriesCache || !financialMovementsCache) return null;
-    const r = getResumoEmpresaCaixaMes(empresaFiltro, m, fimMes);
-    if (!r) return null;
-    return { receitaBruta: r.receita, cmv: r.cmv, margemContribuicao: r.margem, ebitda: r.ebitda, saldoLiquido: r.saldoLiquido };
-  }
-  const frozenGrupo = RESUMO_DETALHADO_MESES[chave];
-  if (frozenGrupo) return { receitaBruta: frozenGrupo.receita, cmv: frozenGrupo.cmv, margemContribuicao: frozenGrupo.margemContribuicao, ebitda: frozenGrupo.ebitda, saldoLiquido: frozenGrupo.saldoLiquido };
-  if (m.isBefore(EXCEL_CONGELADO_ATE) || !categoriesCache || !financialMovementsCache) return null;
-  const kmno = getResumoEmpresaCaixaMes('KMNO', m, fimMes);
-  const novah = getResumoEmpresaCaixaMes('NOVAH', m, fimMes);
-  if (!kmno || !novah) return null;
-  return {
-    receitaBruta: kmno.receita + novah.receita,
-    cmv: kmno.cmv + novah.cmv,
-    margemContribuicao: kmno.margem + novah.margem,
-    ebitda: kmno.ebitda + novah.ebitda,
-    saldoLiquido: kmno.saldoLiquido + novah.saldoLiquido,
-  };
-}
+// FIX 10/09/2026 (pedido Lucas): getEvolucaoMensalMetricasCaixa REMOVIDA
+// -- tinha voltado a existir (arquivo publicado regrediu pra versão
+// anterior ao fix de 09/09/2026) com o bug antigo de não somar RT no
+// branch sem empresa filtrada. A Evolução Mensal de Caixa agora chama
+// direto buildFrozenMetricasCaixaPorEmpresa/EXCEL_HISTORICO_GRUPO_DFC
+// (congelado) e getResumoEmpresaCaixaMes/getDadoGrupoCaixaMes (ao vivo)
+// dentro do próprio renderGrupoDfc — ver esse trecho mais abaixo.
 
 function renderGrupoResumoDetalhado(monthStart, monthEnd) {
   const header = document.getElementById('grupoResumoDetalhadoHeader');
@@ -21886,7 +21908,9 @@ function renderGrupoDfc(monthStart, monthEnd) {
   const rootEl = document.getElementById('sectionGrupoDfc');
   if (!rootEl || !categoriesCache || !movementsCache) return; // section ainda não existe / dados não carregados
 
-  const { porEmpresa, grupo: grupoAoVivo } = buildMetricasGrupoDfcPeriodo(categoriesCache, movementsCache, monthStart, monthEnd);
+  // FIX 10/09/2026 (pedido Lucas): passa modo='caixa' -- renderGrupoDfc é
+  // o card de CAIXA, antes calculava grupoAoVivo em modo indefinido.
+  const { porEmpresa, grupo: grupoAoVivo } = buildMetricasGrupoDfcPeriodo(categoriesCache, movementsCache, monthStart, monthEnd, 'caixa');
   // Cards do topo (resumo executivo) usam a versão espelhada Excel
   // (Jan-Mai/2026) + Omie (Jun/2026+) — pedido reunião 21.07. Pedido
   // 30/07: "individual por empresa, depois por Grupo" — com 1 empresa
@@ -21982,6 +22006,15 @@ function renderGrupoDfc(monthStart, monthEnd) {
     guard++;
   }
   const mesAtualIdxEvolucao = indiceMes(dayjs());
+  // FIX 10/09/2026 (pedido Lucas): reescrita do zero, igual ao fix
+  // validado em 09/09/2026 que tinha sido perdido (arquivo publicado
+  // regrediu pra versão anterior a esse fix). getEvolucaoMensalMetricasCaixa
+  // (função separada, com seu próprio congelado RESUMO_DETALHADO_MESES)
+  // foi REMOVIDA -- chama direto buildFrozenMetricasCaixaPorEmpresa/
+  // EXCEL_HISTORICO_GRUPO_DFC (congelado) e getResumoEmpresaCaixaMes/
+  // getDadoGrupoCaixaMes (ao vivo), MESMO padrão da versão de Competência
+  // (linha ~21827) e MESMA fonte do card de Meta/Resumo -- garante que os
+  // 3 cards (Meta, Evolução Mensal, Resumo) nunca mais divirjam.
   const evolucaoMensal = meses.map(m => {
     const chave = m.format('YYYY-MM');
     // Meses futuros zerados (pedido reunião 27/07: "meses futuros precisam
@@ -21992,21 +22025,28 @@ function renderGrupoDfc(monthStart, monthEnd) {
       return { mes: m, receitaBruta: 0, cmv: 0, margemContribuicao: 0, ebitda: 0, saldoLiquido: 0, semDado: false };
     }
     const fimMes = m.add(1, 'month');
-    // FIX 18/08/2026 (pedido Lucas): 1 única chamada cobre os 2 casos
-    // (empresa selecionada OU Todas as Empresas) -- getEvolucaoMensalMetricasCaixa
-    // sempre usa a fonte Caixa correta, nunca mais movementsCache/
-    // buildMetricasGrupoDfc (que estava com o mesmo bug de competência).
-    const metricasMes = getEvolucaoMensalMetricasCaixa(m, fimMes, empresaUnicaTopo || null);
-    if (!metricasMes) return { mes: m, receitaBruta: null, cmv: null, margemContribuicao: null, ebitda: null, saldoLiquido: null, semDado: true };
-    return {
-      mes: m,
-      receitaBruta: metricasMes.receitaBruta,
-      cmv: metricasMes.cmv,
-      margemContribuicao: metricasMes.margemContribuicao,
-      ebitda: metricasMes.ebitda,
-      saldoLiquido: metricasMes.saldoLiquido,
-      semDado: false,
-    };
+    if (empresaUnicaTopo) {
+      const frozen = buildFrozenMetricasCaixaPorEmpresa(empresaUnicaTopo, chave);
+      if (frozen) {
+        return { mes: m, receitaBruta: frozen.receitaBruta, cmv: frozen.cmv, margemContribuicao: frozen.margemContribuicao, ebitda: frozen.ebitda, saldoLiquido: frozen.saldoLiquido, semDado: false };
+      }
+      if (m.isBefore(EXCEL_CONGELADO_ATE) || !categoriesCache || !financialMovementsCache) {
+        return { mes: m, receitaBruta: null, cmv: null, margemContribuicao: null, ebitda: null, saldoLiquido: null, semDado: true };
+      }
+      const r = getResumoEmpresaCaixaMes(empresaUnicaTopo, m, fimMes);
+      if (!r) return { mes: m, receitaBruta: null, cmv: null, margemContribuicao: null, ebitda: null, saldoLiquido: null, semDado: true };
+      return { mes: m, receitaBruta: r.receita, cmv: r.cmv, margemContribuicao: r.margem, ebitda: r.ebitda, saldoLiquido: r.saldoLiquido, semDado: false };
+    }
+    const frozenGrupo = EXCEL_HISTORICO_GRUPO_DFC[chave];
+    if (frozenGrupo) {
+      return { mes: m, receitaBruta: frozenGrupo.receitaBruta, cmv: frozenGrupo.cmv, margemContribuicao: frozenGrupo.margemContribuicao, ebitda: frozenGrupo.ebitda, saldoLiquido: frozenGrupo.saldoLiquido, semDado: false };
+    }
+    if (m.isBefore(EXCEL_CONGELADO_ATE) || !categoriesCache || !financialMovementsCache) {
+      return { mes: m, receitaBruta: null, cmv: null, margemContribuicao: null, ebitda: null, saldoLiquido: null, semDado: true };
+    }
+    const dadoGrupo = getDadoGrupoCaixaMes(m, fimMes);
+    if (!dadoGrupo) return { mes: m, receitaBruta: null, cmv: null, margemContribuicao: null, ebitda: null, saldoLiquido: null, semDado: true };
+    return { mes: m, receitaBruta: dadoGrupo.receita, cmv: dadoGrupo.cmv, margemContribuicao: dadoGrupo.margemContribuicao, ebitda: dadoGrupo.ebitda, saldoLiquido: dadoGrupo.saldoLiquido, semDado: false };
   });
 
   // Mês anterior ao 1º exibido (Dez do ano anterior) — só pra alimentar
@@ -22026,10 +22066,21 @@ function renderGrupoDfc(monthStart, monthEnd) {
   // e quebrava (buildTodosBlocosRealizado não popula os blocos da
   // empresa pra mês fora do intervalo -- .total vem undefined).
   const metricasAntesEvolucao = congeladoAntesEvolucao
-    || (categoriesCache && movementsCache && !mesAntesEvolucao.isBefore(EXCEL_CONGELADO_ATE)
-      ? (empresaUnicaTopo
-          ? buildMetricasGrupoDfc(empresaUnicaTopo, categoriesCache, movementsCache, mesAntesEvolucao, mesAntesEvolucao.add(1, 'month'))
-          : buildMetricasGrupoDfcPeriodo(categoriesCache, movementsCache, mesAntesEvolucao, mesAntesEvolucao.add(1, 'month')).grupo)
+    || (categoriesCache && financialMovementsCache && !mesAntesEvolucao.isBefore(EXCEL_CONGELADO_ATE)
+      ? (() => {
+          // FIX 10/09/2026 (pedido Lucas: "tudo precisa bater com o card
+          // Resumo" -- reaplicando fix de 09/09/2026 que tinha se
+          // perdido): trocado buildMetricasGrupoDfc/Periodo (trilha
+          // antiga) por getResumoEmpresaCaixaMes/getDadoGrupoCaixaMes,
+          // mesma fonte do Resumo por Empresa/Grupo de Caixa.
+          const r = empresaUnicaTopo
+            ? getResumoEmpresaCaixaMes(empresaUnicaTopo, mesAntesEvolucao, mesAntesEvolucao.add(1, 'month'))
+            : getDadoGrupoCaixaMes(mesAntesEvolucao, mesAntesEvolucao.add(1, 'month'));
+          if (!r) return null;
+          return empresaUnicaTopo
+            ? { receitaBruta: r.receita, cmv: r.cmv, margemContribuicao: r.margem, ebitda: r.ebitda, saldoLiquido: r.saldoLiquido }
+            : { receitaBruta: r.receita, cmv: r.cmv, margemContribuicao: r.margemContribuicao, ebitda: r.ebitda, saldoLiquido: r.saldoLiquido };
+        })()
       : null);
 
   const evolucaoBody = document.getElementById('grupoDfcEvolucaoBody');
