@@ -2681,6 +2681,28 @@
   <!-- ===== MENU PRINCIPAL ===== -->
   <div id="viewMenu" class="view-container active">
 
+    <!-- Card: Prazo Médio de Pagamento/Recebimento (pedido 09/09/2026).
+         Sempre consolidado (KMNO+RT+NOVAH), últimos 30 dias fixos (não
+         segue o filtro De/Até global), média simples (não ponderada por
+         valor). Fonte: dreArvoreMovementsCache (mesma base usada pela
+         árvore DRE), filtrando só títulos com status_titulo real de
+         liquidação (RECEBIDO/PAGO) — nunca usa a data prevista
+         (data_previsao), que é o fallback do dt_pagamento nesse cache
+         para títulos ainda em aberto. -->
+    <div class="section-head">
+      <h2 style="font-size:18px;">Prazo Médio de Pagamento/Recebimento (últimos 30 dias)</h2>
+    </div>
+    <div class="grupo-dfc-cards" style="margin-bottom:24px;">
+      <div class="grupo-dfc-card">
+        <div class="grupo-dfc-card-label">Prazo Médio de Recebimento</div>
+        <div class="grupo-dfc-card-val" id="prazoMedioRecebimento">—</div>
+      </div>
+      <div class="grupo-dfc-card">
+        <div class="grupo-dfc-card-label">Prazo Médio de Pagamento</div>
+        <div class="grupo-dfc-card-val" id="prazoMedioPagamento">—</div>
+      </div>
+    </div>
+
     <!-- Resumo executivo do Grupo (ex-tela "Grupo DFC", agora fixo no
          topo da página principal — os cards de navegação ficam logo
          abaixo. Conteúdo idêntico ao que já existia, só mudou de lugar. -->
@@ -12152,6 +12174,55 @@ async function renderComercial() {
 }
 let chartTicketMedioInstance = null;
 
+// ===== PRAZO MÉDIO DE PAGAMENTO/RECEBIMENTO (pedido 09/09/2026) =====
+// Card no topo da tela principal, sempre consolidado (KMNO+RT+NOVAH,
+// independente do seletor de empresa do topo), últimos 30 dias fixos
+// (não segue o filtro De/Até global), média simples (cada título pesa
+// igual, não ponderada por valor).
+//
+// Fonte: dreArvoreMovementsCache (mesmo cache da árvore DRE, já carrega
+// as 3 empresas juntas sempre). IMPORTANTE: nesse cache, dt_pagamento é
+// `data_pagamento || data_previsao` — cai pra previsão quando o título
+// ainda não foi liquidado. Por isso aqui filtramos por status real
+// (RECEBIDO/PAGO, os únicos valores confiáveis de status_titulo que
+// confirmam liquidação de fato) em vez de confiar só em dt_pagamento
+// existir, senão a média incluiria títulos só previstos, não pagos.
+function renderPrazoMedioPagamentoRecebimento() {
+  const elReceb = document.getElementById('prazoMedioRecebimento');
+  const elPag = document.getElementById('prazoMedioPagamento');
+  if (!elReceb || !elPag) return;
+  if (!dreArvoreMovementsCache || !dreArvoreMovementsCache.length) return;
+
+  const hoje = dayjs();
+  const inicio30d = hoje.subtract(30, 'day');
+
+  const calcularPrazoMedio = (natureza, statusEsperado) => {
+    const titulos = dreArvoreMovementsCache.filter(m => {
+      if (m.natureza !== natureza) return false;
+      if (m.status !== statusEsperado) return false;
+      if (!m.dt_emissao || !m.dt_pagamento) return false;
+      // dt_pagamento aqui só é confiável porque já filtramos por status
+      // RECEBIDO/PAGO acima — nesses casos o valor vem de data_pagamento
+      // real, não do fallback data_previsao (que só se aplica a títulos
+      // ainda em aberto).
+      const dtPagamento = dayjs(m.dt_pagamento);
+      return dtPagamento.isAfter(inicio30d) && dtPagamento.isBefore(hoje.add(1, 'day'));
+    });
+    if (!titulos.length) return null;
+    const somaDias = titulos.reduce((soma, t) => {
+      const dias = dayjs(t.dt_pagamento).diff(dayjs(t.dt_emissao), 'day');
+      return soma + dias;
+    }, 0);
+    return somaDias / titulos.length;
+  };
+
+  const prazoRecebimento = calcularPrazoMedio('R', 'RECEBIDO');
+  const prazoPagamento = calcularPrazoMedio('P', 'PAGO');
+
+  elReceb.textContent = prazoRecebimento !== null ? `${prazoRecebimento.toFixed(1)} dias` : 'Sem dados';
+  elPag.textContent = prazoPagamento !== null ? `${prazoPagamento.toFixed(1)} dias` : 'Sem dados';
+}
+
 function renderVendasFaturamento() {
   const wrapEl = document.getElementById('vendasFaturamentoWrap');
   if (!wrapEl) return;
@@ -16003,6 +16074,7 @@ function renderForSelectedMonth() {
         await carregarDadosDreArvoreTodasEmpresas();
       }
       renderVendasFaturamento();
+      renderPrazoMedioPagamentoRecebimento();
     } catch (e) { console.error('renderVendasFaturamento falhou:', e); }
   })();
   try { renderSaidasEntradasPecasTudo(); } catch (e) { console.error('renderSaidasEntradasPecasTudo falhou:', e); }
