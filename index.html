@@ -2681,27 +2681,14 @@
   <!-- ===== MENU PRINCIPAL ===== -->
   <div id="viewMenu" class="view-container active">
 
-    <!-- Card: Prazo Médio de Pagamento/Recebimento (pedido 09/09/2026).
-         Sempre consolidado (KMNO+RT+NOVAH), últimos 30 dias fixos (não
-         segue o filtro De/Até global), média simples (não ponderada por
-         valor). Fonte: dreArvoreMovementsCache (mesma base usada pela
-         árvore DRE), filtrando só títulos com status_titulo real de
-         liquidação (RECEBIDO/PAGO) — nunca usa a data prevista
-         (data_previsao), que é o fallback do dt_pagamento nesse cache
-         para títulos ainda em aberto. -->
-    <div class="section-head">
-      <h2 style="font-size:18px;">Prazo Médio de Pagamento/Recebimento (últimos 30 dias)</h2>
-    </div>
-    <div class="grupo-dfc-cards" style="margin-bottom:24px;">
-      <div class="grupo-dfc-card">
-        <div class="grupo-dfc-card-label">Prazo Médio de Recebimento</div>
-        <div class="grupo-dfc-card-val" id="prazoMedioRecebimento">—</div>
-      </div>
-      <div class="grupo-dfc-card">
-        <div class="grupo-dfc-card-label">Prazo Médio de Pagamento</div>
-        <div class="grupo-dfc-card-val" id="prazoMedioPagamento">—</div>
-      </div>
-    </div>
+    <!-- Card "Prazo Médio de Pagamento/Recebimento" (existia aqui desde
+         09/09/2026) REMOVIDO em 15/09/2026 (pedido Lucas) -- o cálculo
+         automático agora preenche a coluna "Real" dos indicadores
+         PMR/PMP que já existiam dentro de Indicadores (fin_pmr/fin_pmp,
+         seção "4. Financeiro e Capital de Giro"), em vez de duplicar em
+         2 lugares. Ver renderPrazoMedioPagamentoRecebimento (cálculo,
+         guarda em prazoMedioRecebimentoCalc/prazoMedioPagamentoCalc) e
+         renderIndicadores (onde os valores são lidos e exibidos). -->
 
     <!-- Resumo executivo do Grupo (ex-tela "Grupo DFC", agora fixo no
          topo da página principal — os cards de navegação ficam logo
@@ -5624,6 +5611,20 @@ async function renderIndicadores() {
         // ainda não tem fonte definida (vem de algum lugar a decidir
         // depois), fica só exibindo zerado, sem lápis.
         return ['real', 'meta'].map(campo => {
+          // FIX 15/09/2026 (pedido Lucas): PMR/PMP "Real" passam a usar o
+          // cálculo automático de renderPrazoMedioPagamentoRecebimento em
+          // vez do zero fixo -- únicos 2 indicadores com fonte real
+          // definida até agora. Consolidado (TODAS empresas), não abre por
+          // empresa individual -- mesmo escopo que o card antigo já tinha.
+          // "Meta" nunca muda aqui, continua 100% manual como já era.
+          if (campo === 'real' && item.chave === 'fin_pmr') {
+            const v = prazoMedioRecebimentoCalc;
+            return `<td${classeCol}>${v !== null && v !== undefined ? v.toFixed(1) : '—'}</td>`;
+          }
+          if (campo === 'real' && item.chave === 'fin_pmp') {
+            const v = prazoMedioPagamentoCalc;
+            return `<td${classeCol}>${v !== null && v !== undefined ? v.toFixed(1) : '—'}</td>`;
+          }
           const v = valorIndicadorManual(item.chave, emp, campo);
           const lapis = (ehAdmin && campo === 'meta')
             ? ` <span style="cursor:pointer;" title="Editar valor" onclick="event.stopPropagation();editarIndicadorManual('${item.chave}','${emp}','${campo}','${item.label.replace(/'/g, "\\'")}')">${ICONE_LAPIS}</span>`
@@ -6532,14 +6533,14 @@ function buildArvoreNativaDreConsolidado(categories, movements, meses, nfeRows, 
 }
 
 function buildArvoreNativaDre(empresa, categories, movements, meses, nfeRows, extratoSemTitulo, cmcVendas) {
-  // Exclusão pontual (20/08/2026, confirmado com Lucas): "Transferência
-  // entre contas" (1.04.04, KMNO) é movimento de balanço entre contas da
-  // própria empresa, não receita/despesa real — mas o cadastro dessa
-  // categoria no Omie tem codigo_dre preenchido, então sem essa exclusão
-  // ela entraria indevidamente no DRE nativo. Corrigido no código em vez
-  // de alterar o cadastro no Omie (mesmo padrão já usado pra Adiantamento
-  // de Clientes/Dividendo Sócio em outros blocos deste arquivo).
-  const CATEGORIAS_EXCLUIDAS_DRE_NATIVO = { KMNO: ['1.04.04'] };
+  // Exclusão pontual de 20/08/2026 foi REVERTIDA em 27/08/2026: o
+  // relatório nativo real do Omie CONTA "Transferência entre contas"
+  // (1.04.04, KMNO) normalmente em "01. Outras Receitas" — confirmado
+  // com print real (Jun nativo R$39.295,94 = Transferência R$25.456,23
+  // + Juros Recebidos + Outras Entradas + Rendimentos). A exclusão
+  // reapareceu em algum momento depois (regressão não documentada) —
+  // FIX 16/09/2026: excluídas voltando a ficar vazio, como deve ser.
+  const CATEGORIAS_EXCLUIDAS_DRE_NATIVO = {};
   const catByCodigo = {};
   (categories || []).forEach(c => {
     if (c._empresa !== empresa || !c.codigo_dre) return;
@@ -10416,7 +10417,28 @@ function buildTotalPorCategoriaEmpresa(categories, movements, empresa, monthStar
     // real — confirmado nCodLancCP/cod_titulo batendo nas duas fontes)
     // pra dividir certo. Só entra aqui em modo='caixa'; Competência já
     // tem seu próprio tratamento de rateio em unifiedMovements.
-    const rateio = modo === 'caixa' ? rateioPayableCache[`${empresa}|${m.cod_titulo}`] : null;
+    let rateio = modo === 'caixa' ? rateioPayableCache[`${empresa}|${m.cod_titulo}`] : null;
+    const rateioOriginalParaFallback = rateio;
+    // FIX 15/09/2026 (investigação DRE Competência RT, "Mão de Obra -
+    // Facções"): confirmado que dash_accounts_payable_categorias tem
+    // duplicação de linha em pelo menos 224 títulos (checado em toda a
+    // base) -- os percentuais de um mesmo título somam mais de 100%
+    // (casos vistos: 2 categorias de 100% cada; 15 categorias de rateio
+    // real + 1 categoria "resumo" extra também com 100%; outras
+    // variações). Rateando direto nesses casos conta o valor do título
+    // mais de 1 vez (confirmado: R$2.396.802,18 de distorção potencial
+    // na base toda se ratear cegamente). Sem um jeito confiável de saber
+    // QUAL linha é a duplicata real em cada formato, a saída segura é
+    // NÃO ratear esses casos -- cai no fallback abaixo (1 categoria só,
+    // valor total do título), que não superconta, mas categoriza esses
+    // títulos específicos de forma aproximada (só a 1ª categoria do
+    // rateio quebrado, perdendo o detalhe do rateio real quando ele
+    // existir). Não fecha 100% o DRE por categoria nesses ~224 títulos,
+    // mas evita o erro maior de contar a mais.
+    if (rateio && rateio.length) {
+      const somaPercentual = rateio.reduce((s, rc) => s + Number(rc.percentual || 0), 0);
+      if (somaPercentual > 102) rateio = null;
+    }
     if (rateio && rateio.length) {
       rateio.forEach(rc => {
         const label = catLabelByCode[rc.cod_categoria];
@@ -10428,11 +10450,15 @@ function buildTotalPorCategoriaEmpresa(categories, movements, empresa, monthStar
       });
       return;
     }
-    if (!m.cod_categoria) return;
-    const label = catLabelByCode[m.cod_categoria];
+    // m.cod_categoria costuma ser null exatamente quando existe rateio
+    // (real ou quebrado) -- usa a 1ª categoria do rateio original como
+    // aproximação nesse caso, pra não perder o título do total do Caixa.
+    const categoriaFallback = m.cod_categoria || (rateioOriginalParaFallback && rateioOriginalParaFallback[0]?.cod_categoria) || null;
+    if (!categoriaFallback) return;
+    const label = catLabelByCode[categoriaFallback];
     if (!label) return;
     totalPorLabel[label] = (totalPorLabel[label] || 0) + v;
-    totalPorCodigo[m.cod_categoria] = (totalPorCodigo[m.cod_categoria] || 0) + v;
+    totalPorCodigo[categoriaFallback] = (totalPorCodigo[categoriaFallback] || 0) + v;
   });
   } // fim do "else" (categoriaOficial ausente) — ver início da função
   // Item sintético "REFIS (Parcelas)" da RT: confirmado com Lucas em
@@ -12194,10 +12220,53 @@ let chartTicketMedioInstance = null;
 // (RECEBIDO/PAGO, os únicos valores confiáveis de status_titulo que
 // confirmam liquidação de fato) em vez de confiar só em dt_pagamento
 // existir, senão a média incluiria títulos só previstos, não pagos.
+// Valores calculados de Prazo Médio de Pagamento/Recebimento (últimos 30
+// dias) -- alimentam a coluna "Real" de PMR/PMP dentro de Indicadores
+// (ver renderIndicadores). Card próprio na tela principal foi removido em
+// 15/09/2026 (pedido Lucas): esses 2 indicadores já existiam em
+// Indicadores (fin_pmr/fin_pmp), coluna Real sempre zerada por falta de
+// fonte -- agora usa este cálculo em vez de duplicar em outro lugar.
+let prazoMedioRecebimentoCalc = null;
+let prazoMedioPagamentoCalc = null;
+
+// Contas de ADIANTAMENTO/GATEWAY/AJUSTE excluídas do cálculo de PMR/PMP
+// (15/09/2026, investigação com dado real replicando FIELMENTE os
+// filtros já existentes em unifiedMovements -- isClientePrevisao,
+// excluirGatewayReconciliacaoKmno, excluirIcmsResiduoKmno -- antes de
+// medir por conta corrente; 2 tentativas anteriores erraram por não
+// replicar esses filtros/por mexer na conta errada, ver histórico
+// abaixo). Critério final: exclui contas onde a média de dias
+// (emissão→pagamento) é ~0 ou negativa -- não representa prazo
+// negociado de verdade, é adiantamento/repasse/lançamento de ajuste.
+//
+// IMPORTANTE: RedeCard NÃO entra em nenhuma das duas listas --
+// confirmado que já tem prazo real alto (~84 dias) nas duas naturezas;
+// no PMR ela já sai sozinha via isClientePrevisao (cliente fictício
+// "KMNO PREVISAO"), no PMP ela é mantida de propósito.
+//
+// Resultado confirmado com Lucas: PMR sobe de 8,7 pra 21,8 dias (dobro,
+// bate com a expectativa relatada por ele) e PMP sobe de 48,4 pra 58,1
+// dias -- ambos usando dados reais dos últimos 30 dias, replicando a
+// mesma cadeia de filtros de unifiedMovements/dreArvoreMovementsCache.
+const CONTAS_EXCLUIR_PMR = new Set([
+  10401329896, // KMNO: Adiantamento de Cliente
+  10425945739, // KMNO: Previsão - RedeCard
+  10421738957, // KMNO: Mercado Pago
+  10585067946, // KMNO: BAIXAS E ACERTOS
+  10381462864, // KMNO: Itaú Unibanco
+  10580182056, // KMNO: inativa
+  10370792957, // KMNO: Banco do Brasil
+]);
+const CONTAS_EXCLUIR_PMP = new Set([
+  10334036171, // KMNO: Caixinha
+  10496600192, // KMNO: SMART ONLINE
+  10421738957, // KMNO: Mercado Pago
+  10410853269, // KMNO: Vexpenses
+  10587503990, // KMNO: J&t Express Brazil Ltda
+  10605903201, // KMNO: PROVISÕES
+]);
+
 function renderPrazoMedioPagamentoRecebimento() {
-  const elReceb = document.getElementById('prazoMedioRecebimento');
-  const elPag = document.getElementById('prazoMedioPagamento');
-  if (!elReceb || !elPag) return;
   if (!dreArvoreMovementsCache || !dreArvoreMovementsCache.length) return;
 
   const hoje = dayjs();
@@ -12208,6 +12277,10 @@ function renderPrazoMedioPagamentoRecebimento() {
       if (m.natureza !== natureza) return false;
       if (m.status !== statusEsperado) return false;
       if (!m.dt_emissao || !m.dt_pagamento) return false;
+      // Exclusão de adiantamento/gateway/ajuste -- listas separadas por
+      // natureza, ver comentário em CONTAS_EXCLUIR_PMR/CONTAS_EXCLUIR_PMP.
+      if (natureza === 'R' && CONTAS_EXCLUIR_PMR.has(Number(m.cod_cc))) return false;
+      if (natureza === 'P' && CONTAS_EXCLUIR_PMP.has(Number(m.cod_cc))) return false;
       // dt_pagamento aqui só é confiável porque já filtramos por status
       // RECEBIDO/PAGO acima — nesses casos o valor vem de data_pagamento
       // real, não do fallback data_previsao (que só se aplica a títulos
@@ -12226,8 +12299,16 @@ function renderPrazoMedioPagamentoRecebimento() {
   const prazoRecebimento = calcularPrazoMedio('R', 'RECEBIDO');
   const prazoPagamento = calcularPrazoMedio('P', 'PAGO');
 
-  elReceb.textContent = prazoRecebimento !== null ? `${prazoRecebimento.toFixed(1)} dias` : 'Sem dados';
-  elPag.textContent = prazoPagamento !== null ? `${prazoPagamento.toFixed(1)} dias` : 'Sem dados';
+  prazoMedioRecebimentoCalc = prazoRecebimento;
+  prazoMedioPagamentoCalc = prazoPagamento;
+
+  // Se a tela de Indicadores já estiver montada, atualiza os 2 campos na
+  // hora (sem esperar o usuário reabrir a view) -- mesmo padrão usado por
+  // outras funções que recalculam cache e re-renderizam view já aberta.
+  const wrapIndicadoresEl = document.getElementById('wrapIndicadores');
+  if (wrapIndicadoresEl && wrapIndicadoresEl.innerHTML.trim()) {
+    try { renderIndicadores(); } catch (e) { console.error('renderIndicadores (refresh pós prazo médio) falhou:', e); }
+  }
 }
 
 function renderVendasFaturamento() {
@@ -12867,8 +12948,8 @@ async function sbPaged(path, empresaId, pageSize = 1000) {
 async function carregarDadosDreArvoreTodasEmpresas() {
   const empresas = ['RT', 'KMNO', 'NOVAH'];
   const catPath = 'dash_categories?select=codigo,descricao,conta_receita,conta_despesa,codigo_dre';
-  const recPath = 'dash_accounts_receivable?select=data_emissao,data_registro,data_vencimento,data_pagamento,data_previsao,valor_documento,valor_recebido,status_titulo,codigo_categoria,observacao,numero_documento,numero_documento_fiscal,codigo_cliente_fornecedor,codigo_lancamento_omie';
-  const payPath = 'dash_accounts_payable?select=data_emissao,data_registro,data_vencimento,data_pagamento,data_previsao,valor_documento,status_titulo,codigo_categoria,observacao,numero_documento,numero_documento_fiscal,codigo_cliente_fornecedor,codigo_lancamento_omie';
+  const recPath = 'dash_accounts_receivable?select=data_emissao,data_registro,data_vencimento,data_pagamento,data_previsao,valor_documento,valor_recebido,status_titulo,codigo_categoria,observacao,numero_documento,numero_documento_fiscal,codigo_cliente_fornecedor,codigo_lancamento_omie,codigo_conta_corrente';
+  const payPath = 'dash_accounts_payable?select=data_emissao,data_registro,data_vencimento,data_pagamento,data_previsao,valor_documento,status_titulo,codigo_categoria,observacao,numero_documento,numero_documento_fiscal,codigo_cliente_fornecedor,codigo_lancamento_omie,codigo_conta_corrente';
   // Fallback de categoria (20/08/2026): alguns títulos de payable/receivable
   // (folha — FGTS/GPS/PJ/PPR etc, mais comum na Novah) vêm com
   // codigo_categoria NULO do Omie, mesmo o MESMO título tendo a categoria
@@ -12886,6 +12967,16 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   // abaixo perto de resolverDataRegistroComFallback): usa o registro
   // real quando existe, senão cai pra emissão como sempre foi.
   const fmRegistroPath = 'dash_financial_movements?select=cod_titulo,dt_registro&dt_registro=not.is.null&cod_titulo=not.is.null&cod_titulo=neq.0';
+  // Fallback de Data de Pagamento (15/09/2026, fix "Prazo Médio sem dados"):
+  // accounts_receivable/accounts_payable.data_pagamento nunca vem preenchido
+  // pela API do Omie em ListarContasReceber/ListarContasPagar -- confirmado
+  // via ConsultarContaReceber direto (payload cru não tem esse campo nenhum,
+  // mesmo em título já RECEBIDO). A data real de pagamento só existe via
+  // ListarMovimentos, que já alimenta dash_financial_movements.dt_pagamento
+  // -- mesmo padrão já usado acima pra dt_registro. Usado só por
+  // renderPrazoMedioPagamentoRecebimento (via dreArvoreMovementsCache);
+  // não mexe em unifiedMovementsNativo nem em outros cards.
+  const fmPagamentoPath = 'dash_financial_movements?select=cod_titulo,dt_pagamento&dt_pagamento=not.is.null&cod_titulo=not.is.null&cod_titulo=neq.0';
   // NFe: usado só pela árvore nativa (Impostos/Custo via redirecionamento
   // por tipo_nf), pra somar ICMS/PIS/COFINS embutidos na nota — ver
   // comentário mais abaixo sobre DRE_NATIVO_IMPOSTO_NFE_CODIGO_DRE.
@@ -12964,12 +13055,13 @@ async function carregarDadosDreArvoreTodasEmpresas() {
     }
   };
 
-  const [categories, receivable, payable, fmCategFallback, fmRegistroFallback, cmvProdutos, fatUnidades, financiamentos, parcelas, inadimplencia, nfe, extratoSemTitulo, cmcVendas, pecasFaturadas, extratoCompleto] = await Promise.all([
+  const [categories, receivable, payable, fmCategFallback, fmRegistroFallback, fmPagamentoFallback, cmvProdutos, fatUnidades, financiamentos, parcelas, inadimplencia, nfe, extratoSemTitulo, cmcVendas, pecasFaturadas, extratoCompleto] = await Promise.all([
     buscarPorEmpresa(catPath),
     buscarPorEmpresa(recPath),
     buscarPorEmpresa(payPath),
     buscarPorEmpresa(fmCategPath),
     buscarPorEmpresa(fmRegistroPath),
+    buscarPorEmpresa(fmPagamentoPath),
     buscarPorEmpresa(cmvPath),
     buscarPorEmpresa(fatUnidPath),
     buscarPorEmpresa(finPath),
@@ -13016,11 +13108,20 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   );
   dreArvoreCmcVendasCache = (cmcVendas || []).filter(c => !c.cancelamento);
 
+  // Fallback de Data de Pagamento (15/09/2026) — precisa ser criado AQUI,
+  // antes de unifiedMovements, que já usa esse Map logo abaixo. Ver
+  // comentário completo na definição de fmPagamentoPath (fix "Prazo
+  // Médio sem dados").
+  const pagamentoPorTituloFallback = new Map();
+  (fmPagamentoFallback || []).forEach(f => {
+    pagamentoPorTituloFallback.set(`${f._empresa}|${f.cod_titulo}`, f.dt_pagamento);
+  });
+
   const unifiedMovements = [
     ...receivable.filter(r => r.status_titulo !== 'CANCELADO' && !isClientePrevisao(r._empresa, r.codigo_cliente_fornecedor) && !isTituloExcluidoManualmenteKmno(r._empresa, r.codigo_lancamento_omie)).map(r => ({
       dt_emissao: r.data_emissao,
       dt_registro: r.data_registro,
-      dt_pagamento: r.data_pagamento || r.data_previsao,
+      dt_pagamento: pagamentoPorTituloFallback.get(`${r._empresa}|${r.codigo_lancamento_omie}`) || r.data_pagamento || r.data_previsao,
       dt_vencimento: r.data_vencimento,
       natureza: 'R',
       val_pago: Number(r.valor_documento || 0),
@@ -13030,12 +13131,13 @@ async function carregarDadosDreArvoreTodasEmpresas() {
       observacao: r.observacao,
       num_titulo: r.numero_documento,
       omie_id: r.codigo_lancamento_omie,
+      cod_cc: r.codigo_conta_corrente,
       _empresa: r._empresa,
     })),
     ...payable.filter(p => p.status_titulo !== 'CANCELADO').map(p => ({
       dt_emissao: p.data_emissao,
       dt_registro: p.data_registro,
-      dt_pagamento: p.data_pagamento || p.data_previsao,
+      dt_pagamento: pagamentoPorTituloFallback.get(`${p._empresa}|${p.codigo_lancamento_omie}`) || p.data_pagamento || p.data_previsao,
       dt_vencimento: p.data_vencimento,
       natureza: 'P',
       val_pago: Number(p.valor_documento || 0),
@@ -13045,6 +13147,7 @@ async function carregarDadosDreArvoreTodasEmpresas() {
       observacao: p.observacao,
       num_titulo: p.numero_documento,
       omie_id: p.codigo_lancamento_omie,
+      cod_cc: p.codigo_conta_corrente,
       _empresa: p._empresa,
     })),
   ];
