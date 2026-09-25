@@ -70,7 +70,11 @@ const brl = v => Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits:
 // Valor do movimento na(s) categoria(s) alvo, respeitando rateio
 function valorNasCategorias(det, cats) {
   if (Array.isArray(cats) && cats.length) {
-    return cats.filter(c => categorias.has(c.cCodCateg)).reduce((a, c) => a + Number(c.nValor || 0), 0);
+    // nomes dos campos do rateio variam entre endpoints do Omie
+    const cod = c => c.cCodCateg || c.codigo_categoria || c.cCodigoCategoria;
+    const val = c => Number(c.nValor ?? c.valor ?? c.nValorCateg ?? 0);
+    const soma = cats.filter(c => categorias.has(cod(c))).reduce((a, c) => a + val(c), 0);
+    if (soma || cats.some(c => cod(c))) return soma;
   }
   return categorias.has(det.cCodCateg) ? Number(det.nValorTitulo || 0) : 0;
 }
