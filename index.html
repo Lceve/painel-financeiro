@@ -13273,7 +13273,14 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   // R$10.782 pra R$785 (não fecha 100%, mas melhora 93%). Só existe
   // essa categoria na Novah — confirmado que KMNO/RT não têm nada
   // parecido, não afeta as outras 2 empresas.
-  const CATEGORIAS_ANTECIPACAO_BOLETO_NOVAH = new Set(['1.02.97', '2.05.91', '2.05.92']);
+  // FIX 25/09/2026 (confirmado com Lucas): 2.05.91/2.05.92 saíram da
+  // exclusão. O gap de R$10,8k que justificava o lado de pagamento era o
+  // título GB Shop 2282041029 — ÓRFÃO (excluído no Omie, apagado do
+  // Supabase em 01/09). Conferido via API (scripts/omie-dre-conta.js): o
+  // Omie conta 2.05.92 em Despesas Financeiras (Jun/Novah: título
+  // 2318689365, R$726,29). O lado de recebimento (1.02.97) continua
+  // excluído — fecha Receitas Financeiras com o nativo.
+  const CATEGORIAS_ANTECIPACAO_BOLETO_NOVAH = new Set(['1.02.97']);
   // Data de Registro real (25/08/2026, ver comentário na fmRegistroPath
   // acima). Regra final, validada em 2 iterações:
   // 1) Se existe dt_registro real (via financial_movements), usa ela —
