@@ -13055,7 +13055,8 @@ async function carregarDadosDreArvoreTodasEmpresas() {
     }
   };
 
-  const [categories, receivable, payable, fmCategFallback, fmRegistroFallback, fmPagamentoFallback, cmvProdutos, fatUnidades, financiamentos, parcelas, inadimplencia, nfe, extratoSemTitulo, cmcVendas, pecasFaturadas, extratoCompleto] = await Promise.all([
+  const payableCatPath = 'dash_accounts_payable_categorias?select=parent_omie_id,cod_categoria,valor,percentual';
+  const [categories, receivable, payable, fmCategFallback, fmRegistroFallback, fmPagamentoFallback, cmvProdutos, fatUnidades, financiamentos, parcelas, inadimplencia, nfe, extratoSemTitulo, cmcVendas, pecasFaturadas, extratoCompleto, payableCategorias] = await Promise.all([
     buscarPorEmpresa(catPath),
     buscarPorEmpresa(recPath),
     buscarPorEmpresa(payPath),
@@ -13072,6 +13073,7 @@ async function carregarDadosDreArvoreTodasEmpresas() {
     buscarPorEmpresa(cmcVendasPath),
     buscarPorEmpresa(pecasFaturadasPath),
     buscarPorEmpresa(extratoCompletoPath),
+    buscarPorEmpresa(payableCatPath),
   ]);
   dreArvoreCmvCache = cmvProdutos;
   dreArvoreFatUnidCache = fatUnidades;
@@ -13081,6 +13083,12 @@ async function carregarDadosDreArvoreTodasEmpresas() {
   dreArvoreParcelasCache = parcelas;
   dreArvoreInadimplenciaCache = inadimplencia;
   dreArvoreNfeCache = nfe;
+  // FIX 25/09/2026: rateio carregado aqui também (antes só vinha de loadCompanyData)
+  rateioPayableCache = {};
+  (payableCategorias || []).forEach(c => {
+    const key = `${c._empresa}|${c.parent_omie_id}`;
+    (rateioPayableCache[key] || (rateioPayableCache[key] = [])).push(c);
+  });
   // BUG REAL encontrado e corrigido em 20/07/2026: o endpoint ListarLancCC
   // (fonte de dash_current_account_transactions) NUNCA retorna nCodTitulo
   // no payload da API -- é uma característica do endpoint, não falha de
@@ -13351,7 +13359,7 @@ async function carregarDadosDreArvoreTodasEmpresas() {
       omie_id: r.codigo_lancamento_omie,
       _empresa: r._empresa,
     })),
-    ...payable.filter(p => p.status_titulo !== 'CANCELADO' && !DRE_NATIVO_DUPLICADOS_CONHECIDOS_IDS.has(Number(p.codigo_lancamento_omie)) && !(p._empresa === 'NOVAH' && Number(p.codigo_cliente_fornecedor) === FORNECEDOR_PREVISAO_BLUE_LINE_NOVAH)).flatMap(p => {
+    ...payable.filter(p => p.status_titulo !== 'CANCELADO' && !DRE_NATIVO_DUPLICADOS_CONHECIDOS_IDS.has(Number(p.codigo_lancamento_omie)) && !(p._empresa === 'NOVAH' && Number(p.codigo_cliente_fornecedor) === FORNECEDOR_PREVISAO_BLUE_LINE_NOVAH) && !(p.numero_documento === 'previsão' && p.status_titulo !== 'PAGO')).flatMap(p => {
       const baseNativo = {
         dt_emissao: p.data_emissao,
         dt_registro: resolverDataRegistroComFallback(p._empresa, p.codigo_lancamento_omie, p.data_emissao, p.status_titulo, p.numero_documento, p.data_registro),
