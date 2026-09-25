@@ -5743,7 +5743,7 @@ let orcamentoRealizadoCategoriaCache = {};
 // "Bancos" — ver saldoBancarioMensalPorConta(). Chave "empresa|ano-mes" ->
 // {label (descrição+empresa): saldo}.
 let saldoBancarioMensalCache = {};
-// empresa|AAAA-MM -> Set(cod_cc) das contas que entram no saldo da Prova Real
+// empresa|AAAA-MM -> {cod_cc: saldo_dia1} das contas que entram no saldo da Prova Real
 let saldoBancarioMensalContasCache = {};
 let transferenciasCache = null; // movimentos TRAR/TRAP (transferência entre contas) — bloco "Transferências e Ajustes de Saldo" do DFC
 
@@ -14042,7 +14042,7 @@ try {
       saldoBancarioMensalCache[chave][label] = Number(r.saldo_dia1);
       // mesma exclusão de saldoBancarioMensalTotalEmpresa (investimento, só KMNO)
       if (r.empresa_id === 'KMNO' && LABELS_INVESTIMENTO_EXCLUIR_DO_TOTAL.includes(String(r.descricao || '').trim())) return;
-      (saldoBancarioMensalContasCache[chave] || (saldoBancarioMensalContasCache[chave] = new Set())).add(String(r.cod_cc));
+      (saldoBancarioMensalContasCache[chave] || (saldoBancarioMensalContasCache[chave] = {}))[String(r.cod_cc)] = Number(r.saldo_dia1);
     });
   } catch (e) {
     console.error('Erro ao carregar dash_saldo_bancario_mensal:', e);
@@ -20403,21 +20403,24 @@ function saldoBancarioMensalTotalEmpresa(empresa, mesDayjs) {
   return achou ? total : null;
 }
 
-// Soma líquida (TRAR − TRAP) das transferências nas contas que entram no
-// saldo da Prova Real. null se os caches ainda não carregaram.
-// FIX 25/09/2026: o conjunto de contas é o MESMO do Saldo Inicial/Real
-// (contas presentes em dash_saldo_bancario_mensal no dia 1 do mês ou do
-// seguinte), não fluxo_caixa: na RT as contas principais vêm com
-// fluxo_caixa=null (ficavam de fora e a linha somava transferência interna,
-// −R$10.645 em Jun) e a "Cotas Sicredi" da Novah (fluxo_caixa=false) entra
-// no saldo (−R$100/mês de sobra).
+// O que muda o Saldo Real e o Realizado do Omie não enxerga. null se os
+// caches ainda não carregaram.
+// FIX 25/09/2026 (validado com os saldos das 3 empresas, Jun-Ago): o
+// Realizado ignora o que acontece em conta com fluxo_caixa=false. Então:
+// (1) TRAR − TRAP das contas do fluxo (fluxo_caixa !== false: na RT as
+//     contas principais vêm null) que entram no saldo -- dinheiro vindo de
+//     RedeCard/GetNet/maquininhas/Adiantamento de Cliente etc.
+// (2) + variação do saldo das contas fluxo_caixa=false que estão no saldo
+//     (Cotas Sicredi da Novah +R$100/mês; RedeCard KMNO −R$228 em Jul e
+//     volta em Ago; GetNet parada).
+// Transferência entre duas contas do fluxo se anula sozinha.
 function transferenciasExternasMes(empresas, mesStart, mesEndExcl) {
-  if (!provaRealExtratoCache) return null;
-  const incluidas = new Set();
-  empresas.forEach(emp => [mesStart, mesEndExcl].forEach(m => {
-    (saldoBancarioMensalContasCache[`${emp}|${m.format('YYYY-MM')}`] || []).forEach(cc => incluidas.add(`${emp}|${cc}`));
-  }));
-  if (!incluidas.size) return null;
+  if (!provaRealExtratoCache || !analiseBancosContasCache) return null;
+  const fluxoFalse = new Set(analiseBancosContasCache.filter(c => c.fluxo_caixa === false).map(c => `${c._empresa}|${c.n_cod_cc}`));
+  const incluidas = new Set(analiseBancosContasCache
+    .filter(c => empresas.includes(c._empresa) && c.fluxo_caixa !== false
+      && !(c._empresa === 'KMNO' && LABELS_INVESTIMENTO_EXCLUIR_DO_TOTAL.includes(decodeHtmlEntities(String(c.descricao || '')).trim())))
+    .map(c => `${c._empresa}|${c.n_cod_cc}`));
   let total = 0;
   provaRealExtratoCache.forEach(t => {
     if (t.origem !== 'TRAR' && t.origem !== 'TRAP') return;
@@ -20425,6 +20428,14 @@ function transferenciasExternasMes(empresas, mesStart, mesEndExcl) {
     const d = dayjs(t.dt_lanc);
     if (d.isBefore(mesStart) || !d.isBefore(mesEndExcl)) return;
     total += (t.natureza === 'R' ? 1 : -1) * Number(t.valor_lanc || 0);
+  });
+  empresas.forEach(emp => {
+    const ini = saldoBancarioMensalContasCache[`${emp}|${mesStart.format('YYYY-MM')}`];
+    const fim = saldoBancarioMensalContasCache[`${emp}|${mesEndExcl.format('YYYY-MM')}`];
+    if (!ini || !fim) return;
+    new Set([...Object.keys(ini), ...Object.keys(fim)]).forEach(cc => {
+      if (fluxoFalse.has(`${emp}|${cc}`)) total += (fim[cc] || 0) - (ini[cc] || 0);
+    });
   });
   return total;
 }
@@ -20481,7 +20492,7 @@ function buildProvaRealPorEmpresaMesVivo(empresa, mesStart) {
   // cartão, maquininhas, gateways, BTG). Validado KMNO: TRAR − TRAP das
   // contas da soma = exatamente a diferença que sobrava (Jun R$298.839).
   // Transferência entre duas contas da soma se anula sozinha. Mesmo conjunto
-  // de contas de saldoBancarioMensalTotalEmpresa (as de dash_saldo_bancario_mensal,
+  // de contas de saldoBancarioMensalTotalEmpresa (ver transferenciasExternasMes,
   // e só na KMNO tira LABELS_INVESTIMENTO_EXCLUIR_DO_TOTAL).
   const transferencias = transferenciasExternasMes(empresasCalc, mesStart, mesEndExcl);
 
