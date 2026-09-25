@@ -47,7 +47,9 @@ async function sb(query) {
 }
 
 async function omie(endpoint, call, param, tentativa = 1) {
+  // Sem timeout, uma requisição que o Omie não responde trava o script pra sempre
   const resp = await fetch(`https://app.omie.com.br/api/v1/${endpoint}`, {
+    signal: AbortSignal.timeout(30000),
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ call, app_key: APP_KEY, app_secret: APP_SECRET, param: [param] }),
@@ -70,6 +72,7 @@ async function omie(endpoint, call, param, tentativa = 1) {
   for (let pagina = 1, total = 1; pagina <= total; pagina++) {
     const r = await omie('financas/contapagar/', 'ListarContasPagar', { pagina, registros_por_pagina: 500, apenas_importado_api: 'N' });
     total = r.total_de_paginas || 1;
+    console.log(`  listagem Omie: página ${pagina}/${total}`);
     (r.conta_pagar_cadastro || []).forEach(t => omieIds.add(String(t.codigo_lancamento_omie)));
     await sleep(400);
   }
@@ -106,6 +109,7 @@ async function omie(endpoint, call, param, tentativa = 1) {
       }
       await sleep(350);
     }
+    console.log(`  ${status} ${ano}: ${lista.length} títulos | amostra existe=${existe} nao_existe=${naoExiste} erro=${erro}`);
     resumo.push({ status, ano, qtd: lista.length, valor: brl(lista.reduce((a, t) => a + Number(t.valor_documento || 0), 0)), amostra: Math.min(AMOSTRA, lista.length), existe, nao_existe: naoExiste, erro });
   }
   console.log('\n--- NA BASE E FORA DA LISTAGEM DO OMIE (amostra conferida por título) ---');
