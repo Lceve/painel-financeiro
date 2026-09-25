@@ -74,7 +74,9 @@ async function paginar(endpoint, call, param, chaveLista, chavePagina) {
   pagar.forEach(t => titulos.set(`P|${t.codigo_lancamento_omie}`, t));
   receber.forEach(t => titulos.set(`R|${t.codigo_lancamento_omie}`, t));
 
-  const cont = { igual_entrada: 0, difere_entrada: 0, igual_emissao: 0, sem_titulo: 0 };
+  // contagem separada por natureza: conta a receber não tem data_entrada preenchida
+  const cont = { P: { igual_entrada: 0, difere_entrada: 0, entrada_nula: 0, igual_emissao: 0, sem_titulo: 0 },
+                 R: { igual_entrada: 0, difere_entrada: 0, entrada_nula: 0, igual_emissao: 0, sem_titulo: 0 } };
   const exemplos = [];
   const vistos = new Set();
   movs.forEach(m => {
@@ -84,18 +86,20 @@ async function paginar(endpoint, call, param, chaveLista, chavePagina) {
     if (vistos.has(k)) return;
     vistos.add(k);
     const t = titulos.get(k);
-    if (!t) { cont.sem_titulo++; return; }
+    const c = cont[nat];
+    if (!t) { c.sem_titulo++; return; }
     const reg = iso(det.dDtRegistro), ent = iso(t.data_entrada), emi = iso(t.data_emissao);
-    if (reg === ent) cont.igual_entrada++;
+    if (reg === emi) c.igual_emissao++;
+    if (!ent) { c.entrada_nula++; return; }
+    if (reg === ent) c.igual_entrada++;
     else {
-      cont.difere_entrada++;
+      c.difere_entrada++;
       if (exemplos.length < 25) exemplos.push({ id: det.nCodTitulo, nat, registro: reg, entrada: ent, emissao: emi, status: t.status_titulo });
     }
-    if (reg === emi) cont.igual_emissao++;
   });
 
   console.log(`\n=== ${mesArg}: Data de Registro (ListarMovimentos) x data_entrada (cadastro do título) ===`);
   console.log(`${vistos.size} títulos com registro no mês`);
-  console.table([cont]);
-  if (exemplos.length) { console.log('Exemplos onde registro != data_entrada:'); console.table(exemplos); }
+  console.table(cont);
+  if (exemplos.length) { console.log('Exemplos onde registro != data_entrada (entrada preenchida):'); console.table(exemplos); }
 })().catch(e => { console.error('Falhou:', e.message); process.exit(1); });
