@@ -20396,6 +20396,25 @@ function saldoBancarioMensalTotalEmpresa(empresa, mesDayjs) {
   return achou ? total : null;
 }
 
+// Soma líquida (TRAR − TRAP) das transferências nas contas que entram no
+// saldo da Prova Real. null se os caches ainda não carregaram.
+function transferenciasExternasMes(empresas, mesStart, mesEndExcl) {
+  if (!provaRealExtratoCache || !analiseBancosContasCache) return null;
+  const incluidas = new Set(analiseBancosContasCache
+    .filter(c => empresas.includes(c._empresa) && c.fluxo_caixa
+      && !(c._empresa === 'KMNO' && LABELS_INVESTIMENTO_EXCLUIR_DO_TOTAL.includes(decodeHtmlEntities(String(c.descricao || '')).trim())))
+    .map(c => `${c._empresa}|${c.cod_cc ?? c.n_cod_cc}`));
+  let total = 0;
+  provaRealExtratoCache.forEach(t => {
+    if (t.origem !== 'TRAR' && t.origem !== 'TRAP') return;
+    if (!incluidas.has(`${t._empresa}|${t.cod_cc}`)) return;
+    const d = dayjs(t.dt_lanc);
+    if (d.isBefore(mesStart) || !d.isBefore(mesEndExcl)) return;
+    total += (t.natureza === 'R' ? 1 : -1) * Number(t.valor_lanc || 0);
+  });
+  return total;
+}
+
 function buildProvaRealPorEmpresaMesVivo(empresa, mesStart) {
   const mesEndExcl = mesStart.add(1, 'month');
   // FIX 03/09/2026 (pedido Lucas): Prova Real reescrita pra parar de
@@ -20442,9 +20461,19 @@ function buildProvaRealPorEmpresaMesVivo(empresa, mesStart) {
   });
   if (!achouOficial) return null; // mês sem sync ainda (ex: mês corrente) -- fica em branco, sem fallback
 
-  const saldoCalculado = saldoInicial + entradas - saidas;
+  // FIX 25/09/2026 (aprovado Lucas): o Realizado do Omie não conta
+  // transferência como entrada/saída, mas entra dinheiro nos bancos da soma
+  // vindo de contas FORA dela (ex: "Previsão - RedeCard" = recebíveis de
+  // cartão, maquininhas, gateways, BTG). Validado KMNO: TRAR − TRAP das
+  // contas da soma = exatamente a diferença que sobrava (Jun R$298.839).
+  // Transferência entre duas contas da soma se anula sozinha. Mesmo conjunto
+  // de contas de saldoBancarioMensalTotalEmpresa (fluxo_caixa, e só na KMNO
+  // tira LABELS_INVESTIMENTO_EXCLUIR_DO_TOTAL).
+  const transferencias = transferenciasExternasMes(empresasCalc, mesStart, mesEndExcl);
+
+  const saldoCalculado = saldoInicial + entradas - saidas + (transferencias || 0);
   const diferenca = saldoReal - saldoCalculado;
-  return { saldoInicial, entradas, saidas, saldoCalculado, saldoReal, diferenca };
+  return { saldoInicial, entradas, saidas, transferencias, saldoCalculado, saldoReal, diferenca };
 }
 
 function renderProvaRealPorEmpresa(monthStart, monthEnd) {
@@ -20498,6 +20527,7 @@ function renderProvaRealPorEmpresa(monthStart, monthEnd) {
     { label: 'Saldo Inicial', chave: 'saldoInicial' },
     { label: 'Entradas', chave: 'entradas' },
     { label: 'Saídas', chave: 'saidas' },
+    { label: 'Transferências de contas fora do fluxo (líquido)', chave: 'transferencias' },
     { label: '(=) Saldo Calculado', chave: 'saldoCalculado', destaque: true },
     { label: 'Saldo Real (soma dos bancos)', chave: 'saldoReal' },
     { label: '(=) Diferença (Real − Calculado)', chave: 'diferenca', destaque: true },

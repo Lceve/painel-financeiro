@@ -4,6 +4,8 @@
 // Uso (na pasta do dashboard-sync, que tem as chaves das 4 bases):
 //   node limpar-orfaos.js <EMPRESA> <arquivo_csv>              -> só MOSTRA o que apagaria
 //   node limpar-orfaos.js <EMPRESA> <arquivo_csv> --apagar     -> faz backup e apaga
+//   ... --extrato  -> o CSV é de lançamentos de conta corrente (omie-extrato-orfaos-check.js)
+//   ... --receber  -> o CSV é de contas a RECEBER (omie-orfaos-check.js ... --receber)
 //   node limpar-orfaos.js --restaurar <arquivo_backup.json>    -> devolve tudo do backup
 //
 // <arquivo_csv>: gerado por omie-orfaos-check.js (1ª coluna = codigo_lancamento_omie).
@@ -32,7 +34,19 @@ const CONSOLIDADO = 'ihekejwxdvipgldblskn';
 const EMPRESAS = { KMNO: 'enedbeguahicctwwhpmb', NOVAH: 'yppfzhptzcesmxiruaxk', RT: 'jdifejativsnghfxxeqe' };
 
 // Onde cada título aparece: [projeto, tabela, coluna do id, filtro extra]
-const alvos = empresa => [
+const alvosExtrato = empresa => [
+  { ref: EMPRESAS[empresa], tabela: 'omie_current_account_transactions', col: 'cod_lanc' },
+  { ref: CONSOLIDADO, tabela: 'dash_current_account_transactions', col: 'cod_lanc', extra: `&empresa_id=eq.${empresa}` },
+];
+const alvosReceber = empresa => [
+  { ref: EMPRESAS[empresa], tabela: 'omie_accounts_receivable_categorias', col: 'parent_omie_id', opcional: true },
+  { ref: EMPRESAS[empresa], tabela: 'omie_financial_movements', col: 'cod_titulo' },
+  { ref: EMPRESAS[empresa], tabela: 'omie_accounts_receivable', col: 'codigo_lancamento_omie' },
+  { ref: CONSOLIDADO, tabela: 'dash_accounts_receivable_categorias', col: 'parent_omie_id', extra: `&empresa_id=eq.${empresa}`, opcional: true },
+  { ref: CONSOLIDADO, tabela: 'dash_financial_movements', col: 'cod_titulo', extra: `&empresa_id=eq.${empresa}` },
+  { ref: CONSOLIDADO, tabela: 'dash_accounts_receivable', col: 'codigo_lancamento_omie', extra: `&empresa_id=eq.${empresa}` },
+];
+const alvosTitulo = empresa => [
   { ref: EMPRESAS[empresa], tabela: 'omie_accounts_payable_categorias', col: 'parent_omie_id' },
   { ref: EMPRESAS[empresa], tabela: 'omie_financial_movements', col: 'cod_titulo' },
   { ref: EMPRESAS[empresa], tabela: 'omie_accounts_payable', col: 'codigo_lancamento_omie' },
@@ -69,20 +83,33 @@ async function restaurar(arquivo) {
 (async () => {
   if (process.argv[2] === '--restaurar') return restaurar(process.argv[3]);
 
-  const [empresa, csv, flag] = process.argv.slice(2);
+  const [empresa, csv, ...flags] = process.argv.slice(2);
+  const alvosBase = flags.includes('--extrato') ? alvosExtrato : flags.includes('--receber') ? alvosReceber : alvosTitulo;
+  // tabelas opcionais que não existem no projeto são puladas (conferido no GET abaixo)
+  const inexistentes = new Set();
+  const alvos = emp => alvosBase(emp).filter(a => !inexistentes.has(`${a.ref}|${a.tabela}`));
   if (!EMPRESAS[empresa] || !csv) {
-    console.error('Uso: node limpar-orfaos.js <KMNO|NOVAH|RT> <arquivo_csv> [--apagar]');
+    console.error('Uso: node limpar-orfaos.js <KMNO|NOVAH|RT> <arquivo_csv> [--extrato|--receber] [--apagar]');
     process.exit(1);
   }
-  const apagar = flag === '--apagar';
+  const apagar = flags.includes('--apagar');
   const ids = fs.readFileSync(csv, 'utf8').split('\n').slice(1).map(l => l.split(';')[0].trim()).filter(Boolean);
   console.log(`${ids.length} títulos no CSV | modo: ${apagar ? 'APAGAR (com backup)' : 'SÓ CONFERIR'}\n`);
 
   const backup = { empresa, csv, criado_em: new Date().toISOString(), tabelas: [] };
-  for (const a of alvos(empresa)) {
+  for (const a of alvosBase(empresa)) {
     const linhas = [];
-    for (const lote of lotes(ids, 150)) {
-      linhas.push(...await rest(a.ref, 'GET', `${a.tabela}?select=*&${a.col}=${inFiltro(lote)}${a.extra || ''}`));
+    try {
+      for (const lote of lotes(ids, 150)) {
+        linhas.push(...await rest(a.ref, 'GET', `${a.tabela}?select=*&${a.col}=${inFiltro(lote)}${a.extra || ''}`));
+      }
+    } catch (e) {
+      if (a.opcional && /404|PGRST205|42P01|does not exist/i.test(e.message)) {
+        inexistentes.add(`${a.ref}|${a.tabela}`);
+        console.log(`${a.tabela.padEnd(34)} (tabela não existe nesse projeto — pulada)`);
+        continue;
+      }
+      throw e;
     }
     backup.tabelas.push({ ref: a.ref, tabela: a.tabela, col: a.col, linhas });
     console.log(`${a.tabela.padEnd(34)} ${a.ref === CONSOLIDADO ? 'consolidado' : 'origem     '}  ${linhas.length} linhas`);
