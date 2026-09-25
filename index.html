@@ -12894,6 +12894,16 @@ async function sb(path, empresaId) {
 // pra descobrir o total + todas as demais em paralelo, o que reduz o
 // tempo total de N × latência pra ~2 × latência.
 async function sbPaged(path, empresaId, pageSize = 1000) {
+  // FIX 25/09/2026: sem ORDER BY o Postgres não garante a mesma ordem entre
+  // requisições, e as páginas (buscadas em paralelo) repetiam umas linhas e
+  // pulavam outras. Achado na KMNO Jun/2026: extrato 10552432505 (Transferência
+  // entre contas, R$25.456,23) vinha 2x no cache, inflando Outras Receitas.
+  // Ordena pelas próprias colunas selecionadas: mesmo se houver empate (linhas
+  // idênticas), o conteúdo devolvido é o mesmo, então o total fica correto.
+  if (!/[?&]order=/.test(path)) {
+    const sel = (path.match(/[?&]select=([^&]+)/) || [])[1];
+    if (sel && sel !== '*') path += `${path.includes('?') ? '&' : '?'}order=${sel}`;
+  }
   const sep = path.includes('?') ? '&' : '?';
   const url = `${DASHBOARD.url}/rest/v1/${path}${sep}empresa_id=eq.${empresaId}`;
   const token = currentSession?.access_token || DASHBOARD.anonKey;
