@@ -46,7 +46,7 @@ const dash = textoPares.trim().split('|').filter(Boolean).map(p => {
   const [id, cat, valor] = p.trim().split(':');
   return { id, cat, valor: Number(valor) };
 });
-if (!dash.length || dash.some(l => !l.id || !l.cat || Number.isNaN(l.valor))) {
+if (textoPares.trim() && (!dash.length || dash.some(l => !l.id || !l.cat || Number.isNaN(l.valor)))) {
   console.error('Pares do dashboard vazios ou inválidos (esperado id:cat:valor|...). Recebido:', textoPares.slice(0, 80));
   process.exit(1);
 }
