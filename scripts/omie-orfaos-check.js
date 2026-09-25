@@ -1,9 +1,9 @@
 // Detecta candidatos a ÓRFÃO (título excluído no Omie que continua no Supabase).
-// Pega os títulos de omie_accounts_payable que o ÚLTIMO full sync não tocou
-// (synced_at mais antigo que o último sync - 15 min) e consulta cada um no Omie.
+// Compara os ids de omie_accounts_payable com a listagem completa do Omie e
+// confere por amostra (ConsultarContaPagar) se os que faltam existem ou não.
 //
 // Uso (na VPS, dentro da pasta do sync da empresa):
-//   node omie-orfaos-check.js <ref_do_projeto_supabase>
+//   node omie-orfaos-check.js <ref_do_projeto_supabase> [amostra_por_grupo=5]
 //   ex: node omie-orfaos-check.js enedbeguahicctwwhpmb
 //
 // Só LÊ (Supabase e Omie). Não apaga nada — gera orfaos-<ref>.csv pra revisão.
@@ -64,62 +64,58 @@ async function omie(endpoint, call, param, tentativa = 1) {
 }
 
 (async () => {
-  const [ultimo] = await sb('omie_accounts_payable?select=synced_at&order=synced_at.desc&limit=1');
-  const corte = new Date(new Date(ultimo.synced_at).getTime() - 15 * 60 * 1000).toISOString();
-  console.log(`Último sync: ${ultimo.synced_at} | corte: ${corte}`);
-
-  const candidatos = [];
+  // Não depende de synced_at (o cron incremental muda isso a cada 3h):
+  // compara os ids da base com a listagem COMPLETA do Omie.
+  const omieIds = new Set();
+  for (let pagina = 1, total = 1; pagina <= total; pagina++) {
+    const r = await omie('financas/contapagar/', 'ListarContasPagar', { pagina, registros_por_pagina: 500, apenas_importado_api: 'N' });
+    total = r.total_de_paginas || 1;
+    (r.conta_pagar_cadastro || []).forEach(t => omieIds.add(String(t.codigo_lancamento_omie)));
+    await sleep(400);
+  }
+  const base = [];
   for (let off = 0; ; off += 1000) {
-    const lote = await sb(`omie_accounts_payable?select=codigo_lancamento_omie,valor_documento,status_titulo,data_emissao,numero_documento&synced_at=lt.${corte}&order=codigo_lancamento_omie&limit=1000&offset=${off}`);
-    candidatos.push(...lote);
+    const lote = await sb(`omie_accounts_payable?select=codigo_lancamento_omie,valor_documento,status_titulo,data_emissao,numero_documento&order=codigo_lancamento_omie&limit=1000&offset=${off}`);
+    base.push(...lote);
     if (lote.length < 1000) break;
   }
-  console.log(`${candidatos.length} títulos não tocados pelo último sync — consultando no Omie (≈${Math.ceil(candidatos.length * 0.4 / 60)} min)...`);
+  const candidatos = base.filter(t => !omieIds.has(String(t.codigo_lancamento_omie)));
+  console.log(`Omie lista ${omieIds.size} títulos | base tem ${base.length} | ${candidatos.length} na base e fora da listagem do Omie`);
 
-  const resultado = [];
-  for (const [i, t] of candidatos.entries()) {
-    let situacao, emissaoOmie = '', statusOmie = '';
-    try {
-      const o = await omie('financas/contapagar/', 'ConsultarContaPagar', { codigo_lancamento_omie: Number(t.codigo_lancamento_omie) });
-      situacao = 'EXISTE';
-      emissaoOmie = o.data_emissao || '';
-      statusOmie = o.status_titulo || '';
-    } catch (e) {
-      situacao = /não cadastrado/i.test(e.message) ? 'NAO_EXISTE' : `ERRO: ${e.message.slice(0, 60)}`;
-    }
-    resultado.push({ ...t, situacao, emissaoOmie, statusOmie });
-    if ((i + 1) % 100 === 0) console.log(`  ${i + 1}/${candidatos.length}`);
-    await sleep(350);
-  }
-
-  // Resumo por situação x status x ano
-  const resumo = {};
-  resultado.forEach(r => {
-    const ano = (r.data_emissao || '????').slice(0, 4);
-    const k = `${r.situacao}|${r.status_titulo}|${ano}`;
-    resumo[k] = resumo[k] || { situacao: r.situacao, status: r.status_titulo, ano, qtd: 0, valor: 0 };
-    resumo[k].qtd++;
-    resumo[k].valor += Number(r.valor_documento || 0);
+  // Confere no Omie título a título só uma AMOSTRA por grupo (status x ano),
+  // pra saber se o grupo é órfão (não existe) ou filtro da listagem (existe).
+  const AMOSTRA = Number(process.argv[3] || 5);
+  const grupos = new Map();
+  candidatos.forEach(t => {
+    const k = `${t.status_titulo}|${(t.data_emissao || '????').slice(0, 4)}`;
+    if (!grupos.has(k)) grupos.set(k, []);
+    grupos.get(k).push(t);
   });
-  console.log('\n--- RESUMO ---');
-  console.table(Object.values(resumo).sort((a, b) => a.situacao.localeCompare(b.situacao) || a.ano.localeCompare(b.ano))
-    .map(r => ({ ...r, valor: brl(r.valor) })));
-
-  const orfaos = resultado.filter(r => r.situacao === 'NAO_EXISTE');
-  console.log(`\nNAO_EXISTE no Omie: ${orfaos.length} títulos, R$ ${brl(orfaos.reduce((a, r) => a + Number(r.valor_documento || 0), 0))}`);
-  console.log('Maiores 20:');
-  console.table(orfaos.sort((a, b) => b.valor_documento - a.valor_documento).slice(0, 20)
-    .map(({ codigo_lancamento_omie, valor_documento, status_titulo, data_emissao, numero_documento }) => ({ codigo_lancamento_omie, valor_documento, status_titulo, data_emissao, numero_documento })));
-
-  const existe = resultado.filter(r => r.situacao === 'EXISTE');
-  if (existe.length) {
-    console.log(`\nEXISTEM no Omie mas o full sync não trouxe: ${existe.length} (amostra):`);
-    console.table(existe.slice(0, 10).map(({ codigo_lancamento_omie, status_titulo, statusOmie, data_emissao, emissaoOmie }) => ({ codigo_lancamento_omie, status_titulo, statusOmie, data_emissao, emissaoOmie })));
+  const resumo = [];
+  const resultado = [];
+  for (const [k, lista] of grupos) {
+    const [status, ano] = k.split('|');
+    let existe = 0, naoExiste = 0, erro = 0;
+    for (const t of lista.slice(0, AMOSTRA)) {
+      try {
+        await omie('financas/contapagar/', 'ConsultarContaPagar', { codigo_lancamento_omie: Number(t.codigo_lancamento_omie) });
+        existe++; resultado.push({ ...t, situacao: 'EXISTE' });
+      } catch (e) {
+        if (/não cadastrado/i.test(e.message)) { naoExiste++; resultado.push({ ...t, situacao: 'NAO_EXISTE' }); }
+        else { erro++; resultado.push({ ...t, situacao: `ERRO: ${e.message.slice(0, 40)}` }); }
+      }
+      await sleep(350);
+    }
+    resumo.push({ status, ano, qtd: lista.length, valor: brl(lista.reduce((a, t) => a + Number(t.valor_documento || 0), 0)), amostra: Math.min(AMOSTRA, lista.length), existe, nao_existe: naoExiste, erro });
   }
+  console.log('\n--- NA BASE E FORA DA LISTAGEM DO OMIE (amostra conferida por título) ---');
+  console.table(resumo.sort((a, b) => a.ano.localeCompare(b.ano) || a.status.localeCompare(b.status)));
 
-  const csv = ['codigo_lancamento_omie;valor;status;emissao;documento;situacao']
-    .concat(resultado.map(r => [r.codigo_lancamento_omie, r.valor_documento, r.status_titulo, r.data_emissao, r.numero_documento || '', r.situacao].join(';')))
-    .join('\n');
+  const csv = ['codigo_lancamento_omie;valor;status;emissao;documento;situacao_amostra']
+    .concat(candidatos.map(t => {
+      const r = resultado.find(x => x.codigo_lancamento_omie === t.codigo_lancamento_omie);
+      return [t.codigo_lancamento_omie, t.valor_documento, t.status_titulo, t.data_emissao, t.numero_documento || '', r ? r.situacao : ''].join(';');
+    })).join('\n');
   fs.writeFileSync(`orfaos-${ref}.csv`, csv);
   console.log(`\nLista completa em ${path.join(process.cwd(), `orfaos-${ref}.csv`)}`);
 })().catch(e => { console.error('Falhou:', e.message); process.exit(1); });
