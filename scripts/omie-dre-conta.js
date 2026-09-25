@@ -39,11 +39,17 @@ const dtDe = `01/${pad(mes)}/${ano}`;
 const dtAte = `${new Date(ano, mes, 0).getDate()}/${pad(mes)}/${ano}`;
 const contasDre = new Set(dreArg.split(',').map(s => s.trim()));
 
-// Lado dashboard: id:cat:valor (valor já com sinal: despesa positiva, estorno negativo)
-const dash = (paresArg || '').split('|').filter(Boolean).map(p => {
-  const [id, cat, valor] = p.split(':');
+// Lado dashboard: id:cat:valor (valor já com sinal: despesa positiva, estorno negativo).
+// Aceita o caminho de um arquivo com os pares (recomendado) ou a string direto.
+const textoPares = (paresArg && fs.existsSync(paresArg)) ? fs.readFileSync(paresArg, 'utf8') : (paresArg || '');
+const dash = textoPares.trim().split('|').filter(Boolean).map(p => {
+  const [id, cat, valor] = p.trim().split(':');
   return { id, cat, valor: Number(valor) };
 });
+if (!dash.length || dash.some(l => !l.id || !l.cat || Number.isNaN(l.valor))) {
+  console.error('Pares do dashboard vazios ou inválidos (esperado id:cat:valor|...). Recebido:', textoPares.slice(0, 80));
+  process.exit(1);
+}
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const r2 = v => Math.round(v * 100) / 100;
@@ -81,9 +87,13 @@ async function paginar(endpoint, call, param, chaveLista, chavePagina) {
   return todos;
 }
 
-// Rateio do ListarMovimentos: nomes de campo variam, tenta os conhecidos
-const codCat = c => c.cCodCateg || c.codigo_categoria || c.cCodigoCategoria;
-const valCat = c => Number(c.nDistrValor ?? c.nValor ?? c.valor ?? c.nValorFixo ?? 0);
+// ListarMovimentos não traz o rateio (título com várias categorias vem só com
+// a 1ª): as categorias de cada título vêm do cadastro do próprio título.
+function partesDoTitulo(t) {
+  const rateio = (t.categorias || []).filter(c => c.codigo_categoria);
+  if (rateio.length) return rateio.map(c => ({ cat: c.codigo_categoria, valor: Number(c.valor || 0) }));
+  return [{ cat: t.codigo_categoria, valor: Number(t.valor_documento || 0) }];
+}
 
 (async () => {
   console.log(`\n=== Omie x Dashboard: ${mesArg} | contas DRE ${[...contasDre].join(', ')} ===\n`);
@@ -98,26 +108,40 @@ const valCat = c => Number(c.nDistrValor ?? c.nValor ?? c.valor ?? c.nValorFixo 
   const movs = await paginar('financas/mf/', 'ListarMovimentos', { nRegPorPagina: 500, dDtRegDe: dtDe, dDtRegAte: dtAte }, 'movimentos', 'nPagina');
   console.log(`${movs.length} movimentos com registro em ${mesArg}`);
 
+  // 3) Cadastro dos títulos (pra pegar o rateio real de categorias)
+  const pagar = await paginar('financas/contapagar/', 'ListarContasPagar', { registros_por_pagina: 500, apenas_importado_api: 'N' }, 'conta_pagar_cadastro', 'pagina');
+  const receber = await paginar('financas/contareceber/', 'ListarContasReceber', { registros_por_pagina: 500, apenas_importado_api: 'N' }, 'conta_receber_cadastro', 'pagina');
+  const titulos = new Map();
+  pagar.forEach(t => titulos.set(`P|${t.codigo_lancamento_omie}`, t));
+  receber.forEach(t => titulos.set(`R|${t.codigo_lancamento_omie}`, t));
+  console.log(`${pagar.length} títulos a pagar e ${receber.length} a receber no cadastro`);
+
   const omieLinhas = [];
   const vistos = new Set();
-  let exemploRateio = null;
+  const cancelados = [];
+  let semCadastro = 0;
   movs.forEach(m => {
     const det = m.detalhes || {};
     const id = String(det.nCodTitulo);
+    const nat = det.cNatureza === 'R' ? 'R' : 'P';
     // um título pode vir 1x por baixa/parcela: conta 1x
-    if (vistos.has(id)) return;
-    const sinal = det.cNatureza === 'R' ? -1 : 1;
-    const rateio = Array.isArray(m.categorias) ? m.categorias.filter(c => codCat(c)) : [];
-    if (rateio.length > 1 && !exemploRateio) exemploRateio = m.categorias;
-    const partes = rateio.length
-      ? rateio.map(c => ({ cat: codCat(c), valor: valCat(c) }))
-      : [{ cat: det.cCodCateg, valor: Number(det.nValorTitulo || 0) }];
+    if (vistos.has(`${nat}|${id}`)) return;
+    vistos.add(`${nat}|${id}`);
+    const t = titulos.get(`${nat}|${id}`);
+    if (!t) semCadastro++;
+    const partes = t ? partesDoTitulo(t) : [{ cat: det.cCodCateg, valor: Number(det.nValorTitulo || 0) }];
     const naConta = partes.filter(p => catsDaConta.has(p.cat));
     if (!naConta.length) return;
-    vistos.add(id);
+    const sinal = nat === 'R' ? -1 : 1;
+    // Cancelado fica de fora do total, mas aparece listado pra conferência
+    if (det.cStatus === 'CANCELADO' || (t && t.status_titulo === 'CANCELADO')) {
+      naConta.forEach(p => cancelados.push({ id, cat: p.cat, valor: sinal * p.valor }));
+      return;
+    }
     naConta.forEach(p => omieLinhas.push({ id, cat: p.cat, valor: sinal * p.valor, status: det.cStatus, origem: det.cOrigem }));
   });
-  if (exemploRateio) console.log('exemplo de rateio (conferir nomes de campo):', JSON.stringify(exemploRateio).slice(0, 300));
+  if (semCadastro) console.log(`${semCadastro} movimentos sem título no cadastro (usada a categoria do movimento)`);
+  if (cancelados.length) { console.log('\nCANCELADOS no Omie (fora do total do Omie):'); console.table(cancelados); }
 
   // 3) Por categoria
   const porCat = new Map();
