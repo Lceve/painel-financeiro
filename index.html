@@ -4274,7 +4274,11 @@ window.addEventListener('resize', () => {
 
 // Garante que o estado inicial (menu) fica registado no histórico assim que a página
 // carrega, para que o primeiro "voltar" já tenha para onde ir em vez de fechar a aba.
-if (!history.state) {
+// FIX 28/09/2026 (recuperação de senha): o link do e-mail traz o token no hash
+// (#access_token=...&type=recovery). A flag é guardada ANTES do replaceState porque
+// trocar o hash pra #viewMenu apagava o token antes de o Supabase conseguir lê-lo.
+const veioDeLinkRecuperacaoSenha = /(^|[#&])type=recovery(&|$)/.test(location.hash);
+if (!history.state && !veioDeLinkRecuperacaoSenha) {
   const initUrl = (location.protocol === 'file:') ? undefined : '#viewMenu';
   history.replaceState({ view: 'viewMenu' }, '', initUrl);
 }
@@ -4311,6 +4315,9 @@ async function initAuth() {
     await loadProfile(session.user.id);
     showDashboard();
     dashboardInitialized = true;
+    // FIX 28/09/2026: o evento PASSWORD_RECOVERY do Supabase dispara durante a inicialização,
+    // antes do onAuthStateChange abaixo ser registrado — por isso o modal é aberto aqui.
+    if (veioDeLinkRecuperacaoSenha) openPasswordModal();
   } else {
     showLogin();
   }
