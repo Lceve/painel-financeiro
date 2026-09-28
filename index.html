@@ -4274,7 +4274,11 @@ window.addEventListener('resize', () => {
 
 // Garante que o estado inicial (menu) fica registado no histórico assim que a página
 // carrega, para que o primeiro "voltar" já tenha para onde ir em vez de fechar a aba.
-if (!history.state) {
+// FIX 28/09/2026 (recuperação de senha): o link do e-mail traz o token no hash
+// (#access_token=...&type=recovery). A flag é guardada ANTES do replaceState porque
+// trocar o hash pra #viewMenu apagava o token antes de o Supabase conseguir lê-lo.
+const veioDeLinkRecuperacaoSenha = /(^|[#&])type=recovery(&|$)/.test(location.hash);
+if (!history.state && !veioDeLinkRecuperacaoSenha) {
   const initUrl = (location.protocol === 'file:') ? undefined : '#viewMenu';
   history.replaceState({ view: 'viewMenu' }, '', initUrl);
 }
@@ -4304,14 +4308,54 @@ const supabaseKmno = supabase.createClient(
 // (por isso "carregando…" ficava piscando e a seleção de 1 empresa voltava pras 3).
 let dashboardInitialized = false;
 
+// FIX 28/09/2026 (recuperação de senha): o link do e-mail entrega uma sessão completa.
+// Enquanto a nova senha não for definida, a sessão fica "pendente": o dashboard não abre,
+// só a tela de nova senha (sem botão Fechar). A marca fica no localStorage pra valer também
+// se a pessoa fechar a aba e voltar. É uma barreira da interface — a proteção contra
+// e-mail comprometido é o MFA.
+const CHAVE_SENHA_PENDENTE = 'dash_senha_pendente';
+let senhaPendenteMemoria = false;
+function senhaPendente() {
+  if (senhaPendenteMemoria) return true;
+  try { return localStorage.getItem(CHAVE_SENHA_PENDENTE) === '1'; } catch (e) { return false; }
+}
+function marcarSenhaPendente() {
+  senhaPendenteMemoria = true;
+  try { localStorage.setItem(CHAVE_SENHA_PENDENTE, '1'); } catch (e) { /* segue só em memória */ }
+}
+function limparSenhaPendente() {
+  senhaPendenteMemoria = false;
+  try { localStorage.removeItem(CHAVE_SENHA_PENDENTE); } catch (e) { /* ignore */ }
+}
+// Mostra só a tela de nova senha (dashboard escondido, sem botão Fechar).
+function exigirNovaSenha() {
+  showLogin();
+  openPasswordModal(true);
+}
+async function cancelarRecuperacaoSenha() {
+  limparSenhaPendente();
+  closePasswordModal();
+  await handleLogout();
+}
+
 async function initAuth() {
   const { data: { session } } = await supabaseClient.auth.getSession();
   if (session) {
     currentSession = session;
-    await loadProfile(session.user.id);
-    showDashboard();
-    dashboardInitialized = true;
+    if (veioDeLinkRecuperacaoSenha) {
+      marcarSenhaPendente();
+      // tira o token do endereço/histórico e evita remarcar a pendência num recarregamento
+      try { history.replaceState({ view: 'viewMenu' }, '', location.pathname + location.search + '#viewMenu'); } catch (e) { /* ignore */ }
+    }
+    if (senhaPendente()) {
+      exigirNovaSenha();
+    } else {
+      await loadProfile(session.user.id);
+      showDashboard();
+      dashboardInitialized = true;
+    }
   } else {
+    limparSenhaPendente();
     showLogin();
   }
 
@@ -4319,15 +4363,13 @@ async function initAuth() {
     currentSession = session;
     if (session) {
       if (event === 'PASSWORD_RECOVERY') {
-        // Usuário clicou no link de "esqueci minha senha" — força a
-        // troca antes de qualquer outra coisa, em vez de só cair no
-        // dashboard normal com a senha antiga/expirada ainda valendo.
-        await loadProfile(session.user.id);
-        showDashboard();
-        dashboardInitialized = true;
-        openPasswordModal();
+        // Usuário clicou no link de "esqueci minha senha" — só a tela de nova senha
+        // aparece; o dashboard só abre depois da troca (ver senhaPendente).
+        marcarSenhaPendente();
+        exigirNovaSenha();
         return;
       }
+      if (senhaPendente()) return; // sessão de recuperação: dashboard só depois da nova senha
       if (dashboardInitialized) return; // só revalida o token, não re-renderiza nem refaz fetch
       await loadProfile(session.user.id);
       showDashboard();
@@ -4335,6 +4377,7 @@ async function initAuth() {
     } else {
       currentProfile = null;
       dashboardInitialized = false;
+      limparSenhaPendente(); // sem sessão não há recuperação pendente
       showLogin();
     }
   });
@@ -4725,12 +4768,33 @@ async function approveRequest(id, btn) {
 }
 
 // ─── Trocar senha: admin troca direto, viewer solicita ─────
-function openPasswordModal() {
+function openPasswordModal(forcado) {
   document.getElementById('passwordOverlay').classList.remove('hidden');
   document.getElementById('pwError').classList.remove('show');
   document.getElementById('pwSuccess').classList.remove('show');
 
+  // Modo forçado (link de recuperação): sem botão Fechar, formulário de troca direta pra
+  // qualquer papel e uma saída "Cancelar e sair" que não entra no dashboard.
+  const btnFechar = document.querySelector('#passwordOverlay > .request-box > .req-actions > .req-cancel');
+  if (btnFechar) btnFechar.style.display = forcado ? 'none' : '';
+
   const content = document.getElementById('pwContent');
+  if (forcado) {
+    content.innerHTML = `
+      <div class="login-sub">Defina uma nova senha para continuar. O dashboard só abre depois da troca.</div>
+      <form id="pwChangeForm" onsubmit="return handleChangePassword(event)">
+        <label for="pwNova">Nova senha</label>
+        <input type="password" id="pwNova" autocomplete="new-password" required minlength="6">
+        <label for="pwConfirma">Confirmar nova senha</label>
+        <input type="password" id="pwConfirma" autocomplete="new-password" required minlength="6">
+        <div class="req-actions">
+          <button type="submit" id="pwSubmitBtn">Trocar senha</button>
+          <button type="button" class="req-cancel" onclick="cancelarRecuperacaoSenha()">Cancelar e sair</button>
+        </div>
+      </form>
+    `;
+    return;
+  }
   const isAdmin = currentProfile && currentProfile.role === 'admin';
 
   if (isAdmin) {
@@ -4757,6 +4821,7 @@ function openPasswordModal() {
 }
 
 function closePasswordModal() {
+  if (senhaPendente()) return; // sessão de recuperação: só fecha depois de trocar a senha ou cancelar
   document.getElementById('passwordOverlay').classList.add('hidden');
 }
 
@@ -4799,6 +4864,19 @@ async function handleChangePassword(e) {
   okEl.textContent = 'Senha trocada com sucesso!';
   okEl.classList.add('show');
   document.getElementById('pwChangeForm').reset();
+  if (senhaPendente()) {
+    // veio do link de recuperação: agora sim libera o dashboard
+    limparSenhaPendente();
+    const { data: { session: sessaoAtual } } = await supabaseClient.auth.getSession();
+    if (sessaoAtual) {
+      currentSession = sessaoAtual;
+      await loadProfile(sessaoAtual.user.id);
+      showDashboard();
+      dashboardInitialized = true;
+    } else {
+      showLogin();
+    }
+  }
   setTimeout(closePasswordModal, 1800);
   return false;
 }
