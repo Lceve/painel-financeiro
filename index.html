@@ -3952,7 +3952,7 @@
 <script>
 // Versão do arquivo no ar — carimbada pelo checar.ps1 antes de cada commit (14/10/2026).
 // Aparece no rodapé, pra saber na hora qual versão o navegador está rodando.
-const BUILD_VERSAO = '1.2.62 - 14/10/2026 16:57';
+const BUILD_VERSAO = '1.2.63 - 14/10/2026 17:05';
   // Função responsável por alternar as secções do Dashboard de forma fluida
 // Nomes exibidos no cabeçalho (ao lado da data) — pedido 03/08/2026.
 // viewMenu fica com label vazio (é a tela inicial, não precisa dizer "Menu").
@@ -12705,22 +12705,49 @@ function sbRevalFim() {
     console.log(`[cache] conferência terminou: ${sbReval.mudou ? 'HÁ dados novos' : 'sem mudanças'}`);
   }, 1500);
 }
-async function sbRevalidar(chave, path, empresaId, pageSize, salvo) {
+// A conferência espera 3s antes de ir ao banco, pra não disputar a rede com o
+// que a tela ainda precisa carregar na abertura.
+const SB_REVAL_ATRASO = 3000;
+const sbRevalFila = [];
+let sbRevalTimer = null;
+function sbRevalidar(chave, nome, fetcher, salvo) {
   sbReval.pendentes++;
-  if (!sbReval.iniciou) { sbReval.iniciou = true; }
   if (!sbReval.maisAntigo || salvo.t < sbReval.maisAntigo) sbReval.maisAntigo = salvo.t;
   sbAvisoCache('conferindo');
-  try {
-    const rows = await sbPagedRedeOnline(path, empresaId, pageSize);
-    const h = sbHashRows(rows);
-    if (h !== salvo.h) { sbReval.mudou = true; console.log(`[cache] mudou: ${path.split('?')[0]} ${empresaId}`); }
-    await idbPut(chave, { t: Date.now(), h, rows });
-  } catch (e) {
-    console.error('[cache] conferência falhou:', e);
-  } finally {
-    sbReval.pendentes--;
-    sbRevalFim();
+  sbRevalFila.push({ chave, nome, fetcher, salvo });
+  if (!sbRevalTimer) sbRevalTimer = setTimeout(() => {
+    sbRevalTimer = null;
+    sbRevalFila.splice(0).forEach(async ({ chave, nome, fetcher, salvo }) => {
+      try {
+        const rows = await fetcher();
+        const h = sbHashRows(rows);
+        if (h !== salvo.h) { sbReval.mudou = true; console.log(`[cache] mudou: ${nome}`); }
+        await idbPut(chave, { t: Date.now(), h, rows });
+      } catch (e) {
+        console.error('[cache] conferência falhou:', e);
+      } finally {
+        sbReval.pendentes--;
+        sbRevalFim();
+      }
+    });
+  }, SB_REVAL_ATRASO);
+}
+// Mesmo cache pra consultas avulsas (ex: tabelas pequenas do loadCompanyData).
+// fetcher() devolve um array de linhas.
+async function sbCacheConsulta(nome, fetcher) {
+  const uid = currentSession?.user?.id;
+  if (!SB_IDB_ATIVO || !uid) return fetcher();
+  const chave = `${uid}|consulta|${nome}`;
+  let salvo = null;
+  try { salvo = await idbGet(chave); } catch (e) { /* segue online */ }
+  const agora = Date.now();
+  if (salvo && salvo.rows && agora - salvo.t < SB_IDB_TTL) {
+    if (agora - salvo.t > SB_IDB_FRESCO) sbRevalidar(chave, nome, fetcher, salvo);
+    return salvo.rows;
   }
+  const rows = await fetcher();
+  setTimeout(() => { idbPut(chave, { t: Date.now(), h: sbHashRows(rows), rows }).catch(() => {}); }, 0);
+  return rows;
 }
 async function sbPagedRede(path, empresaId, pageSize = SB_PAGE_SIZE) {
   const uid = currentSession?.user?.id;
@@ -12730,7 +12757,7 @@ async function sbPagedRede(path, empresaId, pageSize = SB_PAGE_SIZE) {
   try { salvo = await idbGet(chave); } catch (e) { /* sem cache, segue online */ }
   const agora = Date.now();
   if (salvo && salvo.rows && agora - salvo.t < SB_IDB_TTL) {
-    if (agora - salvo.t > SB_IDB_FRESCO) sbRevalidar(chave, path, empresaId, pageSize, salvo);
+    if (agora - salvo.t > SB_IDB_FRESCO) sbRevalidar(chave, `${path.split('?')[0]} ${empresaId}`, () => sbPagedRedeOnline(path, empresaId, pageSize), salvo);
     return salvo.rows;
   }
   const rows = await sbPagedRedeOnline(path, empresaId, pageSize);
@@ -13917,9 +13944,15 @@ try {
   if (!analiseBancosContasCache && !analiseBancosCarregando) carregarDadosAnaliseBancosTodasEmpresas();
   // 14/10/2026: as 3 tabelas pequenas abaixo saem junto com as grandes (antes
   // esperavam as grandes terminar e ainda iam uma depois da outra).
-  const pOrcamento = Promise.resolve(supabaseClient.from('dash_orcamento_realizado')
-    .select('empresa_id,ano,mes,receitas_realizado,despesas_realizado'));
-  const pOrcCategoria = (async () => {
+  // 14/10/2026: as 3 consultas pequenas também passam pelo cache do navegador
+  const comoResposta = (p) => p.then(data => ({ data, error: null }), error => ({ data: null, error }));
+  const pOrcamento = comoResposta(sbCacheConsulta('dash_orcamento_realizado', async () => {
+    const { data, error } = await supabaseClient.from('dash_orcamento_realizado')
+      .select('empresa_id,ano,mes,receitas_realizado,despesas_realizado');
+    if (error) throw error;
+    return data || [];
+  }));
+  const pOrcCategoria = sbCacheConsulta('dash_orcamento_realizado_categoria', async () => {
     let rows = [];
     let fromIdx = 0;
     const PAGE = 1000;
@@ -13934,10 +13967,14 @@ try {
       fromIdx += PAGE;
     }
     return rows;
-  })();
+  });
   pOrcCategoria.catch(() => {}); // erro tratado no try/catch lá embaixo
-  const pSaldoMensal = Promise.resolve(supabaseClient.from('dash_saldo_bancario_mensal')
-    .select('empresa_id,cod_cc,descricao,ano,mes,saldo_dia1'));
+  const pSaldoMensal = comoResposta(sbCacheConsulta('dash_saldo_bancario_mensal', async () => {
+    const { data, error } = await supabaseClient.from('dash_saldo_bancario_mensal')
+      .select('empresa_id,cod_cc,descricao,ano,mes,saldo_dia1');
+    if (error) throw error;
+    return data || [];
+  }));
   const [categories, movements, receivable, payable, clients, contasCorrentes, payableCategorias, cmcVendasBruto] = await Promise.all([
     sbMultiPaged('dash_categories?select=codigo,descricao,conta_receita,conta_despesa,natureza,transferencia,nao_exibir,nao_fluxo,categoria_superior'),
     sbMultiPaged('dash_financial_movements?select=cod_categoria,dt_emissao,dt_registro,dt_pagamento,dt_vencimento,status,natureza,val_pago,val_liquido,num_titulo,observacao,origem,cod_titulo,cod_cc'),
