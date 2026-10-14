@@ -12766,7 +12766,9 @@ async function auditarSbMaster(empresa = 'KMNO') {
 let _dreArvorePromise = null;
 function carregarDadosDreArvoreTodasEmpresas() {
   if (!_dreArvorePromise) {
-    _dreArvorePromise = _carregarDadosDreArvoreImpl().finally(() => { _dreArvorePromise = null; });
+    _dreArvorePromise = _carregarDadosDreArvoreImpl()
+      .then(r => { console.log(`[tempo] árvore DRE pronta em ${tLoad()}`); return r; })
+      .finally(() => { _dreArvorePromise = null; });
   }
   return _dreArvorePromise;
 }
@@ -13763,7 +13765,10 @@ try {
   carregarDashMetas(); // não precisa esperar — não bloqueia o resto, renderiza quando chegar
   // 14/10/2026: árvore DRE (3 empresas) começa a carregar já, em segundo plano,
   // em vez de só depois do render. As tabelas grandes ela pega do cache do sbPaged.
+  window.__t0Load = performance.now(); // referência dos logs [tempo]
   if (!dreArvoreCategoriesCache) carregarDadosDreArvoreTodasEmpresas().catch(e => console.error('pré-carga árvore DRE falhou:', e));
+  // 14/10/2026: idem pro carregador do card Bancos/Análise Caixa (antes só começava no render)
+  if (!analiseBancosContasCache && !analiseBancosCarregando) carregarDadosAnaliseBancosTodasEmpresas();
   // 14/10/2026: as 3 tabelas pequenas abaixo saem junto com as grandes (antes
   // esperavam as grandes terminar e ainda iam uma depois da outra).
   const pOrcamento = Promise.resolve(supabaseClient.from('dash_orcamento_realizado')
@@ -16628,6 +16633,7 @@ async function carregarDadosAnaliseBancosTodasEmpresas() {
       movs.flatMap((rows, i) => (rows || []).map(r => ({ ...r, _empresa: empresas[i] })))
     ));
     analiseBancosReceivableCache = receb.flatMap((rows, i) => (rows || []).filter(r => r.status_titulo !== 'CANCELADO').map(r => ({ ...r, _empresa: empresas[i] })));
+    console.log(`[tempo] bancos prontos em ${tLoad()}`);
   } catch (err) {
     console.error('carregarDadosAnaliseBancosTodasEmpresas falhou:', err);
   } finally {
@@ -20326,7 +20332,15 @@ function buildProvaRealPorEmpresaMesVivo(empresa, mesStart) {
   return { saldoInicial, entradas, saidas, transferencias, saldoCalculado, saldoReal, diferenca };
 }
 
+const tLoad = () => ((performance.now() - (window.__t0Load || 0)) / 1000).toFixed(1) + 's';
+// Wrapper de medição (14/10/2026): loga quando a Prova Real é desenhada e quanto leva.
 function renderProvaRealPorEmpresa(monthStart, monthEnd) {
+  const t = performance.now();
+  const r = _renderProvaRealPorEmpresaImpl(monthStart, monthEnd);
+  console.log(`[tempo] prova real desenhada em ${tLoad()} (render ${Math.round(performance.now() - t)}ms)`);
+  return r;
+}
+function _renderProvaRealPorEmpresaImpl(monthStart, monthEnd) {
   const tabsEl = document.getElementById('provaRealEmpresaTabs');
   const bodyEl = document.getElementById('provaRealEmpresaBody');
   const wrapEl = document.getElementById('provaRealEmpresaWrap');
