@@ -3952,7 +3952,7 @@
 <script>
 // Versão do arquivo no ar — carimbada pelo checar.ps1 antes de cada commit (14/10/2026).
 // Aparece no rodapé, pra saber na hora qual versão o navegador está rodando.
-const BUILD_VERSAO = '1.2.63 - 14/10/2026 17:05';
+const BUILD_VERSAO = '1.2.64 - 14/10/2026 17:24';
   // Função responsável por alternar as secções do Dashboard de forma fluida
 // Nomes exibidos no cabeçalho (ao lado da data) — pedido 03/08/2026.
 // viewMenu fica com label vazio (é a tela inicial, não precisa dizer "Menu").
@@ -21188,8 +21188,18 @@ function buildResumoDetalhadoMesAoVivo(categories, movements, monthStart, monthE
   const transferenciaEmbutidaGrupo = somaBucket('transferenciaEntreContas');
   // FIX 20/08/2026 (mesmo motivo do branch com empresaFiltro acima): só
   // usa o oficial (caixa) quando modo==='caixa' de verdade.
+  // FIX 14/10/2026: a RT ficava FORA do Recebimento do Grupo neste ramo
+  // oficial (somava só KMNO+NOVAH, apesar da nota de 10/09 dizer que entrava
+  // por categoria). Hoje a RT já tem linha oficial (ex: Jun/26 R$66.055).
+  // Agora entra: oficial da RT (menos os descontos DELA) se existir, senão a
+  // receita por categoria da RT. Os descontos de KMNO+NOVAH continuam iguais.
+  const rtOficialRow = orcamentoRealizadoCache[`RT|${mesChaveGrupo}`];
+  const descontosRt = somaMapa(rt.recebimentoEmprestimos) + somaMapa(rt.transferenciaEntreContas);
+  const receitaRtCaixa = rtOficialRow
+    ? Number(rtOficialRow.receitas_realizado) - descontosRt
+    : somaMapa(rt.receita);
   const receita = (modo === 'caixa' && kmnoOficialRow && novahOficialRow)
-    ? (Number(kmnoOficialRow.receitas_realizado) + Number(novahOficialRow.receitas_realizado) - recebimentoEmprestimosEmbutidoGrupo - transferenciaEmbutidaGrupo)
+    ? (Number(kmnoOficialRow.receitas_realizado) + Number(novahOficialRow.receitas_realizado) - (recebimentoEmprestimosEmbutidoGrupo - somaMapa(rt.recebimentoEmprestimos)) - (transferenciaEmbutidaGrupo - somaMapa(rt.transferenciaEntreContas)) + receitaRtCaixa)
     : (receitaProdutos + receitaMercadorias + receitaServicos);
   // FIX 20/08/2026: mesma reescala do branch com empresaFiltro acima —
   // "receita" oficial pode divergir da soma das 3 linhas de quebra.
