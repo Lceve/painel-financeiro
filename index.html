@@ -3952,7 +3952,7 @@
 <script>
 // Versão do arquivo no ar — carimbada pelo checar.ps1 antes de cada commit (14/10/2026).
 // Aparece no rodapé, pra saber na hora qual versão o navegador está rodando.
-const BUILD_VERSAO = '14/10/2026 16:14';
+const BUILD_VERSAO = '14/10/2026 16:19';
   // Função responsável por alternar as secções do Dashboard de forma fluida
 // Nomes exibidos no cabeçalho (ao lado da data) — pedido 03/08/2026.
 // viewMenu fica com label vazio (é a tela inicial, não precisa dizer "Menu").
@@ -23201,27 +23201,54 @@ showDashboard = function() {
 initAuth();
 
 // ===== Medição de render (14/10/2026, temporário) =====
-// Envolve as funções de render chamadas pelo renderForSelectedMonth e loga
-// as que levam mais de 50ms: [render] nome: Xms. Não muda nenhum cálculo.
+// Envolve funções de render/cálculo e ACUMULA tempo e nº de chamadas de
+// cada uma. Ao fim de cada renderForSelectedMonth imprime uma tabela
+// (console.table) com as que somaram mais de 50ms. Não muda nenhum cálculo.
 // Pra desligar: apagar este bloco.
 (function () {
   const nomes = ['renderDre','renderDfc','renderDfcArvore','renderProjections','preencherComparativoAnual',
     'renderResumoConsolidado','renderGrupoDfc','renderResumoCmcKmno','renderDreNativoCopia',
     'renderGrupoDreCompetenciaCopia','renderInadimplencia','renderPagarAnalises','renderAnalisesGraficoIndicadores',
     'renderVendasFaturamento','renderPrazoMedioPagamentoRecebimento','renderSaidasEntradasPecasTudo',
-    'renderImpostosView','renderDreArvoreNativa','renderResumoCapital','renderGrupoBancos','renderForSelectedMonth'];
-  const loga = (n, t) => { const ms = Math.round(performance.now() - t); if (ms > 50) console.log(`[render] ${n}: ${ms}ms`); };
+    'renderImpostosView','renderDreArvoreNativa','renderResumoCapital','renderGrupoBancos',
+    // dentro do renderGrupoDfc
+    'renderGrupoResumoDetalhado','renderGrupoResumoPorEmpresa','renderGrupoResumoTeste','renderGrupoProvaReal',
+    'renderGrupoDfcMetas','renderGrupoDfcChart','renderWaterfallDreCaixa','renderProvaRealPorEmpresa',
+    'buildMetricasGrupoDfcComExcel','buildMetricasGrupoDfcPeriodo','buildFrozenMetricasCaixaPorEmpresa',
+    'getResumoEmpresaCaixaMes','getDadoGrupoCaixaMes','buildResumoDetalhadoMesAoVivo',
+    'buildResumoCategoriasMes','buildTodosBlocosRealizado','buildTotalPorCategoriaEmpresa'];
+  const stats = {};
+  window.__renderStats = stats;
+  const soma = (n, t) => { const e = stats[n] || (stats[n] = { chamadas: 0, ms: 0 }); e.chamadas++; e.ms += performance.now() - t; };
+  const imprime = () => {
+    const linhas = Object.entries(stats).filter(([, v]) => v.ms > 50)
+      .sort((x, y) => y[1].ms - x[1].ms)
+      .map(([n, v]) => ({ funcao: n, ms_total: Math.round(v.ms), chamadas: v.chamadas }));
+    console.log('[render] tempo acumulado (funções aninhadas somam também no pai):');
+    console.table(linhas);
+  };
   nomes.forEach(n => {
     const f = window[n];
     if (typeof f !== 'function') return;
     window[n] = function (...args) {
       const t = performance.now();
       const r = f.apply(this, args);
-      if (r && typeof r.then === 'function') { r.then(() => loga(n + ' (async)', t), () => {}); }
-      else loga(n, t);
+      if (r && typeof r.then === 'function') r.then(() => soma(n + ' (async)', t), () => {});
+      else soma(n, t);
       return r;
     };
   });
+  const rfsm = window.renderForSelectedMonth;
+  if (typeof rfsm === 'function') {
+    window.renderForSelectedMonth = function (...args) {
+      Object.keys(stats).forEach(k => delete stats[k]);
+      const t = performance.now();
+      const r = rfsm.apply(this, args);
+      soma('renderForSelectedMonth', t);
+      setTimeout(imprime, 0);
+      return r;
+    };
+  }
 })();
 </script>
 <script>
