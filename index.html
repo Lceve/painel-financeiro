@@ -3950,6 +3950,9 @@
 </div>
 
 <script>
+// Versão do arquivo no ar — carimbada pelo checar.ps1 antes de cada commit (14/10/2026).
+// Aparece no rodapé, pra saber na hora qual versão o navegador está rodando.
+const BUILD_VERSAO = 'dev';
   // Função responsável por alternar as secções do Dashboard de forma fluida
 // Nomes exibidos no cabeçalho (ao lado da data) — pedido 03/08/2026.
 // viewMenu fica com label vazio (é a tela inicial, não precisa dizer "Menu").
@@ -16025,7 +16028,7 @@ function renderForSelectedMonth() {
   // excluída a pedido do Lucas.
   renderDfcArvore();
 
-  document.getElementById('footerRight').textContent = `Atualizado em ${dayjs().format('DD/MM/YYYY HH:mm')}`;
+  document.getElementById('footerRight').textContent = `Atualizado em ${dayjs().format('DD/MM/YYYY HH:mm')} · versão ${BUILD_VERSAO}`;
 
   renderProjections();
   preencherComparativoAnual(monthStart);
