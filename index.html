@@ -2670,8 +2670,8 @@
           <div class="company-multiselect-panel" id="companyMultiselectPanel" hidden></div>
         </div>
         <div class="global-period-range">
-          <label>De: <input type="month" id="globalPeriodDe" aria-label="Período inicial"></label>
-          <label>Até: <input type="month" id="globalPeriodAte" aria-label="Período final"></label>
+          <label>De: <input type="month" id="globalPeriodDe" min="2026-06" aria-label="Período inicial"></label>
+          <label>Até: <input type="month" id="globalPeriodAte" min="2026-06" aria-label="Período final"></label>
           <span id="currentViewLabel" style="margin-left:10px; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--bone-dim); text-transform:uppercase;"></span>
         </div>
       </div>
@@ -12633,6 +12633,17 @@ const SB_MASTER_ORDEM = {
   dash_accounts_receivable: ['codigo_lancamento_omie'],
   dash_accounts_payable: ['codigo_lancamento_omie'],
 };
+// Fase 2 (14/10/2026): corte de data no download único. Dados ao vivo começam
+// em jun/2026 (jan-mai é Excel congelado) e o seletor De/Até tem min 2026-06.
+// Extrato: Prova Real/saldo voltam do saldo_atual somando só lançamentos
+// DEPOIS do mês escolhido, então jun+ basta. Movimentos: fica a linha com
+// qualquer data >= corte. A receber/a pagar NÃO são cortados (título antigo
+// pago com atraso depois de junho tem todas as datas próprias antigas).
+const SB_CORTE_DATA = '2026-06-01';
+const SB_MASTER_FILTRO = {
+  dash_current_account_transactions: `dt_lanc=gte.${SB_CORTE_DATA}`,
+  dash_financial_movements: `or=(dt_pagamento.gte.${SB_CORTE_DATA},dt_registro.gte.${SB_CORTE_DATA},dt_emissao.gte.${SB_CORTE_DATA},dt_vencimento.gte.${SB_CORTE_DATA})`,
+};
 const sbMasterCache = {};      // "tabela|empresa" -> Promise<linhas>
 const sbMasterUsados = new Set(); // paths atendidos pelo master (pra auditoria)
 
@@ -12713,10 +12724,11 @@ async function sbPaged(path, empresaId, pageSize = 1000) {
     const t0 = performance.now();
     const ordem = SB_MASTER_ORDEM[info.tabela] || [];
     const colsBusca = [...info.master, ...ordem.filter(c => !info.master.includes(c))];
-    const caminhoMaster = `${info.tabela}?select=${colsBusca.join(',')}` + (ordem.length ? `&order=${ordem.join(',')}` : '');
+    const filtroData = SB_MASTER_FILTRO[info.tabela] ? `&${SB_MASTER_FILTRO[info.tabela]}` : '';
+    const caminhoMaster = `${info.tabela}?select=${colsBusca.join(',')}` + (ordem.length ? `&order=${ordem.join(',')}` : '') + filtroData;
     // se a coluna da chave não existir/der erro, refaz sem a ordem por PK (caminho da Fase 1)
     sbMasterCache[chave] = sbPagedRede(caminhoMaster, empresaId, pageSize)
-      .catch(err => { console.error(`[sb] ${info.tabela}: falhou com order por PK, refazendo sem:`, err); return sbPagedRede(`${info.tabela}?select=${info.master.join(',')}`, empresaId, pageSize); })
+      .catch(err => { console.error(`[sb] ${info.tabela}: falhou com order por PK, refazendo sem:`, err); return sbPagedRede(`${info.tabela}?select=${info.master.join(',')}` + filtroData, empresaId, pageSize); })
       .then(rows => { console.log(`[sb] ${info.tabela} ${empresaId}: ${rows.length} linhas em ${Math.round(performance.now() - t0)}ms (download único)`); return rows; })
       .catch(err => { delete sbMasterCache[chave]; throw err; });
   }
@@ -12732,7 +12744,8 @@ async function auditarSbMaster(empresa = 'KMNO') {
   for (const path of Array.from(sbMasterUsados)) {
     const info = sbMasterParse(path);
     const novo = await sbPaged(path, empresa);
-    const antigo = await sbPagedRede(path, empresa);
+    const corte = SB_MASTER_FILTRO[info.tabela];
+    const antigo = await sbPagedRede(corte ? `${path}&${corte}` : path, empresa);
     const igual = JSON.stringify(novo) === JSON.stringify(antigo);
     if (igual) ok++; else ruim++;
     console.log(`[auditoria ${empresa}] ${igual ? 'IGUAL ' : 'DIFERENTE'} ${info.tabela} (${novo.length} x ${antigo.length}) ${path.slice(path.indexOf('?') + 1, path.indexOf('?') + 70)}`);
