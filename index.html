@@ -3952,7 +3952,7 @@
 <script>
 // Versão do arquivo no ar — carimbada pelo checar.ps1 antes de cada commit (14/10/2026).
 // Aparece no rodapé, pra saber na hora qual versão o navegador está rodando.
-const BUILD_VERSAO = '1.2.60 - 14/10/2026 16:44';
+const BUILD_VERSAO = '1.2.61 - 14/10/2026 16:49';
   // Função responsável por alternar as secções do Dashboard de forma fluida
 // Nomes exibidos no cabeçalho (ao lado da data) — pedido 03/08/2026.
 // viewMenu fica com label vazio (é a tela inicial, não precisa dizer "Menu").
@@ -12562,7 +12562,12 @@ async function sb(path, empresaId) {
 // ~9.875 linhas levava ~10 requisições em série); agora é só 1 requisição
 // pra descobrir o total + todas as demais em paralelo, o que reduz o
 // tempo total de N × latência pra ~2 × latência.
-async function sbPagedRede(path, empresaId, pageSize = 1000) {
+// 14/10/2026: página de 10.000 linhas (era 1.000). Requer "Max rows" da API do
+// Supabase >= 10000; se o servidor ainda cortar em 1.000, o código abaixo
+// percebe (veio menos que o pedido e o total é maior) e pagina no tamanho
+// que o servidor devolveu — nunca perde linha.
+const SB_PAGE_SIZE = 10000;
+async function sbPagedRede(path, empresaId, pageSize = SB_PAGE_SIZE) {
   // FIX 25/09/2026: sem ORDER BY o Postgres não garante a mesma ordem entre
   // requisições, e as páginas (buscadas em paralelo) repetiam umas linhas e
   // pulavam outras. Achado na KMNO Jun/2026: extrato 10552432505 (Transferência
@@ -12601,22 +12606,26 @@ async function sbPagedRede(path, empresaId, pageSize = 1000) {
   const first = await fetchPage(0);
   const all = [...first.page];
 
-  if (first.total && first.total > pageSize) {
+  // Passo real = o que o servidor devolveu na 1ª página (pode ser menor que
+  // pageSize se o "Max rows" do Supabase cortar).
+  const passo = first.page.length;
+  if (first.total && passo > 0 && first.total > passo) {
     // Sabemos o total: dispara todas as páginas restantes em paralelo.
     const offsets = [];
-    for (let offset = pageSize; offset < first.total; offset += pageSize) offsets.push(offset);
+    for (let offset = passo; offset < first.total; offset += passo) offsets.push(offset);
     const restos = await Promise.all(offsets.map(offset => fetchPage(offset)));
     restos.forEach(r => all.push(...r.page));
-  } else if (!first.total && first.page.length === pageSize) {
+    if (all.length !== first.total) console.warn(`[sb] ${path.split('?')[0]} ${empresaId}: esperado ${first.total}, veio ${all.length}`);
+  } else if (!first.total && passo >= Math.min(pageSize, 1000)) {
     // Salvaguarda: se por algum motivo o total não veio no header (ex:
     // count=exact desabilitado no projeto), cai pro loop sequencial
     // antigo, mais lento porém sempre correto.
-    let offset = pageSize;
+    let offset = passo;
     while (true) {
       const r = await fetchPage(offset);
       all.push(...r.page);
-      if (r.page.length < pageSize) break;
-      offset += pageSize;
+      if (r.page.length < passo) break;
+      offset += passo;
     }
   }
 
@@ -12726,7 +12735,7 @@ function sbMasterProjetar(rows, cols, filtros) {
 // com seu cache próprio, baixando 2-3x. Reaproveita inclusive pedido em
 // andamento; devolve cópia rasa das linhas pra ninguém mexer no dado do outro.
 const sbQueryCache = {};
-async function sbPaged(path, empresaId, pageSize = 1000) {
+async function sbPaged(path, empresaId, pageSize = SB_PAGE_SIZE) {
   const info = SB_MASTER_ATIVO ? sbMasterParse(path) : null;
   if (!info) {
     if (!SB_MASTER_ATIVO) return sbPagedRede(path, empresaId, pageSize);
