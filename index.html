@@ -2578,10 +2578,10 @@
     <div class="req-success" id="reqSuccess"></div>
     <form id="requestForm" onsubmit="return handleAccessRequest(event)">
       <label for="reqNome">Nome completo</label>
-      <input type="text" id="reqNome" required>
+      <input type="text" id="reqNome" maxlength="100" required>
 
       <label for="reqEmail">E-mail</label>
-      <input type="email" id="reqEmail" required>
+      <input type="email" id="reqEmail" maxlength="120" required>
 
       <label>Empresa(s) que deseja acessar</label>
       <div class="company-check-row" id="reqCompanyRow">
@@ -2591,7 +2591,7 @@
       </div>
 
       <label for="reqMotivo">Motivo / justificativa</label>
-      <textarea id="reqMotivo" rows="3" placeholder="Ex: preciso acompanhar o financeiro da unidade X..." required></textarea>
+      <textarea id="reqMotivo" rows="3" maxlength="500" placeholder="Ex: preciso acompanhar o financeiro da unidade X..." required></textarea>
 
       <div class="req-actions">
         <button type="button" class="req-cancel" onclick="closeRequestModal()">Cancelar</button>
@@ -4546,19 +4546,19 @@ async function renderRequestsList() {
     item.dataset.id = sol.id;
 
     const companiesHtml = (sol.empresas_solicitadas || [])
-      .map(k => `<span class="req-company-tag">${COMPANY_LABELS_REQ[k] || k}</span>`)
+      .map(k => `<span class="req-company-tag">${esc(COMPANY_LABELS_REQ[k] || k)}</span>`)
       .join('');
 
     item.innerHTML = `
       <div class="req-item-top">
         <div>
-          <div class="req-name">${sol.nome}</div>
-          <div class="req-email">${sol.email}</div>
+          <div class="req-name">${esc(sol.nome)}</div>
+          <div class="req-email">${esc(sol.email)}</div>
         </div>
         <div class="req-date">${fmtReqDate(sol.criado_em)}</div>
       </div>
       <div class="req-companies">${companiesHtml}</div>
-      <div class="req-motivo">${sol.motivo || '<em>Sem motivo informado.</em>'}</div>
+      <div class="req-motivo">${sol.motivo ? esc(sol.motivo) : '<em>Sem motivo informado.</em>'}</div>
       <div class="req-actions">
         <button type="button" class="req-approve" onclick="approveRequest('${sol.id}', this)">✓ Aprovar e criar conta</button>
         <button type="button" class="req-reject" onclick="rejectRequest('${sol.id}', this)">✕ Rejeitar</button>
@@ -4633,7 +4633,7 @@ async function approveRequest(id, btn) {
     }
 
     resultEl.className = 'req-result ok show';
-    resultEl.innerHTML = `Conta criada! E-mail: <code>${json.email}</code> · Senha temporária: <code>${json.senha_temporaria}</code><br>Repasse essas credenciais ao visitante com segurança.`;
+    resultEl.innerHTML = `Conta criada! E-mail: <code>${esc(json.email)}</code> · Senha temporária: <code>${esc(json.senha_temporaria)}</code><br>Repasse essas credenciais ao visitante com segurança.`;
     btn.textContent = 'Aprovado ✓';
     refreshRequestsBadge();
   } catch (e) {
@@ -4846,7 +4846,7 @@ async function renderPasswordRequestsList() {
     item.innerHTML = `
       <div class="req-item-top">
         <div>
-          <div class="req-email">${sol.email}</div>
+          <div class="req-email">${esc(sol.email)}</div>
         </div>
         <div class="req-date">${fmtReqDate(sol.criado_em)}</div>
       </div>
@@ -4922,7 +4922,7 @@ async function approvePasswordChange(id, btn) {
     }
 
     resultEl.className = 'req-result ok show';
-    resultEl.innerHTML = `Senha trocada! E-mail: <code>${json.email}</code> · Senha temporária: <code>${json.senha_temporaria}</code><br>Repasse essa senha ao usuário com segurança.`;
+    resultEl.innerHTML = `Senha trocada! E-mail: <code>${esc(json.email)}</code> · Senha temporária: <code>${esc(json.senha_temporaria)}</code><br>Repasse essa senha ao usuário com segurança.`;
     btn.textContent = 'Aprovado ✓';
     refreshPasswordRequestsBadge();
   } catch (e) {
@@ -12496,6 +12496,15 @@ const fmtUnid = (n) => {
   const v = Number(n || 0);
   return v.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
 };
+
+// Escapa texto vindo de fora (formulário público de acesso, API) antes de
+// colocar em innerHTML. Evita XSS armazenado no painel do admin (14/10/2026).
+const esc = (v) => String(v ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
 
 const decodeHtmlEntities = (str) => {
   if (!str) return str;
