@@ -12543,7 +12543,7 @@ async function sb(path, empresaId) {
 // ~9.875 linhas levava ~10 requisições em série); agora é só 1 requisição
 // pra descobrir o total + todas as demais em paralelo, o que reduz o
 // tempo total de N × latência pra ~2 × latência.
-async function sbPaged(path, empresaId, pageSize = 1000) {
+async function sbPagedRede(path, empresaId, pageSize = 1000) {
   // FIX 25/09/2026: sem ORDER BY o Postgres não garante a mesma ordem entre
   // requisições, e as páginas (buscadas em paralelo) repetiam umas linhas e
   // pulavam outras. Achado na KMNO Jun/2026: extrato 10552432505 (Transferência
@@ -12565,7 +12565,9 @@ async function sbPaged(path, empresaId, pageSize = 1000) {
         'Authorization': `Bearer ${token}`,
         'Range-Unit': 'items',
         'Range': `${offset}-${offset + pageSize - 1}`,
-        'Prefer': 'count=exact',
+        // 14/10/2026: count=exact só na 1ª página (as demais não usam o total e o
+        // banco refazia a contagem completa a cada página).
+        ...(offset === 0 ? { 'Prefer': 'count=exact' } : {}),
       }
     });
     if (!res.ok) throw new Error(`Supabase ${res.status} (${empresaId}): ${await res.text()}`);
@@ -12600,6 +12602,133 @@ async function sbPaged(path, empresaId, pageSize = 1000) {
   }
 
   return all;
+}
+
+// ===== sbPaged com download único por tabela (14/10/2026) =====
+// Antes, a mesma tabela grande era baixada várias vezes, cada uma com uma
+// lista de colunas diferente (ex: dash_financial_movements 5x, extrato 2x,
+// receber 3x, pagar 2x) — ~400 mil linhas pra ~116 mil únicas. Agora essas
+// 4 tabelas são baixadas UMA vez por empresa, com a união das colunas, e
+// cada pedido seguinte sai desse download: escolhe as colunas e aplica os
+// filtros (not.is.null / neq.X) em JavaScript, reordenando igual ao banco
+// (ordem pelas próprias colunas selecionadas, nulos por último) pra não
+// mudar o "último vence" dos Maps de fallback. Qualquer pedido que não se
+// encaixe (coluna fora da lista, filtro desconhecido) cai no caminho antigo.
+// Desligar pra comparar: abrir o painel com ?sbmaster=0 na URL.
+// Conferir equivalência: no Console, await auditarSbMaster('KMNO').
+const SB_MASTER_ATIVO = !/[?&]sbmaster=0(&|$)/.test(location.search);
+const SB_MASTER_COLUNAS = {
+  dash_financial_movements: ['cod_titulo','cod_categoria','dt_registro','dt_pagamento','dt_emissao','dt_vencimento','status','natureza','val_pago','val_liquido','num_titulo','observacao','origem','cod_cc'],
+  dash_current_account_transactions: ['dt_lanc','valor_lanc','cod_categoria','natureza','cod_titulo','origem','cod_cc','cod_lanc','cod_agrup'],
+  dash_accounts_receivable: ['codigo_lancamento_omie','data_emissao','data_registro','data_vencimento','data_pagamento','data_previsao','valor_documento','valor_recebido','status_titulo','codigo_categoria','observacao','numero_documento','numero_documento_fiscal','codigo_cliente_fornecedor','codigo_conta_corrente'],
+  dash_accounts_payable: ['codigo_lancamento_omie','data_emissao','data_registro','data_vencimento','data_pagamento','data_previsao','valor_documento','status_titulo','codigo_categoria','observacao','numero_documento','numero_documento_fiscal','codigo_cliente_fornecedor','codigo_conta_corrente'],
+};
+// Chave primária (sem empresa_id, que já é filtrado): o download único ordena
+// por ela — usa índice, em vez de ordenar a tabela inteira por todas as
+// colunas a cada página. A ordem final dos pedidos continua sendo refeita em
+// JS por sbMasterProjetar, então não depende dessa.
+const SB_MASTER_ORDEM = {
+  dash_financial_movements: ['omie_id', 'origem'],
+  dash_current_account_transactions: ['omie_id'],
+  dash_accounts_receivable: ['codigo_lancamento_omie'],
+  dash_accounts_payable: ['codigo_lancamento_omie'],
+};
+const sbMasterCache = {};      // "tabela|empresa" -> Promise<linhas>
+const sbMasterUsados = new Set(); // paths atendidos pelo master (pra auditoria)
+
+function sbMasterParse(path) {
+  const q = path.indexOf('?');
+  if (q < 0) return null;
+  const tabela = path.slice(0, q);
+  const master = SB_MASTER_COLUNAS[tabela];
+  if (!master) return null;
+  let cols = null;
+  const filtros = [];
+  for (const p of path.slice(q + 1).split('&')) {
+    const eq = p.indexOf('=');
+    if (eq < 0) return null;
+    const k = p.slice(0, eq), v = p.slice(eq + 1);
+    if (k === 'select') { cols = v.split(','); continue; }
+    if (v === 'not.is.null') { filtros.push({ col: k, op: 'notnull' }); continue; }
+    if (v.startsWith('neq.')) { filtros.push({ col: k, op: 'neq', val: v.slice(4) }); continue; }
+    return null; // filtro/parametro desconhecido -> caminho antigo
+  }
+  if (!cols || cols.includes('*')) return null;
+  if (!cols.every(c => master.includes(c))) return null;
+  if (!filtros.every(f => master.includes(f.col))) return null;
+  return { tabela, master, cols, filtros };
+}
+
+function sbMasterProjetar(rows, cols, filtros) {
+  const passa = (r) => filtros.every(f => {
+    const v = r[f.col];
+    if (v === null || v === undefined) return false; // IS NOT NULL e <> ambos descartam nulo
+    return f.op === 'notnull' ? true : String(v) !== f.val;
+  });
+  const out = [];
+  for (const r of rows) {
+    if (!passa(r)) continue;
+    const o = {};
+    for (const c of cols) o[c] = r[c];
+    out.push(o);
+  }
+  // mesma ordem do banco: ORDER BY colunas selecionadas ASC, NULLS LAST
+  out.sort((a, b) => {
+    for (const c of cols) {
+      const x = a[c], y = b[c];
+      if (x === y) continue;
+      const xn = x === null || x === undefined, yn = y === null || y === undefined;
+      if (xn && yn) continue;
+      if (xn) return 1;
+      if (yn) return -1;
+      if (typeof x === 'number' && typeof y === 'number') { if (x !== y) return x < y ? -1 : 1; continue; }
+      const sx = String(x), sy = String(y);
+      if (sx < sy) return -1;
+      if (sx > sy) return 1;
+    }
+    return 0;
+  });
+  return out;
+}
+
+async function sbPaged(path, empresaId, pageSize = 1000) {
+  const info = SB_MASTER_ATIVO ? sbMasterParse(path) : null;
+  if (!info) return sbPagedRede(path, empresaId, pageSize);
+  const chave = `${info.tabela}|${empresaId}`;
+  if (!sbMasterCache[chave]) {
+    const t0 = performance.now();
+    const ordem = SB_MASTER_ORDEM[info.tabela] || [];
+    const colsBusca = [...info.master, ...ordem.filter(c => !info.master.includes(c))];
+    const caminhoMaster = `${info.tabela}?select=${colsBusca.join(',')}` + (ordem.length ? `&order=${ordem.join(',')}` : '');
+    // se a coluna da chave não existir/der erro, refaz sem a ordem por PK (caminho da Fase 1)
+    sbMasterCache[chave] = sbPagedRede(caminhoMaster, empresaId, pageSize)
+      .catch(err => { console.error(`[sb] ${info.tabela}: falhou com order por PK, refazendo sem:`, err); return sbPagedRede(`${info.tabela}?select=${info.master.join(',')}`, empresaId, pageSize); })
+      .then(rows => { console.log(`[sb] ${info.tabela} ${empresaId}: ${rows.length} linhas em ${Math.round(performance.now() - t0)}ms (download único)`); return rows; })
+      .catch(err => { delete sbMasterCache[chave]; throw err; });
+  }
+  const rows = await sbMasterCache[chave];
+  sbMasterUsados.add(path);
+  return sbMasterProjetar(rows, info.cols, info.filtros);
+}
+
+// Auditoria manual: refaz cada pedido que o master atendeu pelo caminho
+// antigo (rede) e compara com o resultado derivado. Console: await auditarSbMaster('KMNO')
+async function auditarSbMaster(empresa = 'KMNO') {
+  let ok = 0, ruim = 0;
+  for (const path of Array.from(sbMasterUsados)) {
+    const info = sbMasterParse(path);
+    const novo = await sbPaged(path, empresa);
+    const antigo = await sbPagedRede(path, empresa);
+    const igual = JSON.stringify(novo) === JSON.stringify(antigo);
+    if (igual) ok++; else ruim++;
+    console.log(`[auditoria ${empresa}] ${igual ? 'IGUAL ' : 'DIFERENTE'} ${info.tabela} (${novo.length} x ${antigo.length}) ${path.slice(path.indexOf('?') + 1, path.indexOf('?') + 70)}`);
+    if (!igual) {
+      const n = Math.min(novo.length, antigo.length);
+      for (let i = 0; i < n; i++) if (JSON.stringify(novo[i]) !== JSON.stringify(antigo[i])) { console.log('  1ª diferença na linha', i, novo[i], antigo[i]); break; }
+    }
+  }
+  console.log(`[auditoria ${empresa}] ${ok} iguais, ${ruim} diferentes`);
+  return { ok, ruim };
 }
 
 // Busca de categorias + lançamentos (unificados) das 3 empresas SEMPRE,
@@ -13214,8 +13343,10 @@ function onCompanyCheckboxChange(checkbox) {
   }
   currentCompanyKey = selectedCompanyKeys[0];
   updateCompanyMultiselectLabel();
-  loadCompanyData();
+  carregarEmpresaDebounced(); // 14/10/2026: agrupa cliques seguidos nos checkboxes numa carga só
 }
+// debounce() é function declaration (hoisted), por isso pode ser usado aqui.
+const carregarEmpresaDebounced = debounce(loadCompanyData, 350);
 
 let companyToggleSetup = false;
 function setupCompanyMultiselectToggle() {
