@@ -18,7 +18,7 @@ if ($LASTEXITCODE -ne 0) { Write-Host "Sintaxe com erro - NAO commite." -Foregro
 
 Write-Host ""
 Write-Host "Arquivos modificados:" -ForegroundColor Cyan
-git status --short
+git status --short --untracked-files=no
 Write-Host ""
 git diff --stat -- index.html
 Write-Host ""
