@@ -12761,7 +12761,16 @@ async function auditarSbMaster(empresa = 'KMNO') {
 // Busca de categorias + lançamentos (unificados) das 3 empresas SEMPRE,
 // pro card "DRE por Bloco" — não depende de selectedCompanyKeys. Mesma
 // lógica de unificação receivable+payable usada no carregamento principal.
-async function carregarDadosDreArvoreTodasEmpresas() {
+// 14/10/2026: chamadas simultâneas (pré-carga + até 6 cards) compartilham a
+// mesma carga em andamento; ao terminar, libera (quem checa cache nulo recarrega).
+let _dreArvorePromise = null;
+function carregarDadosDreArvoreTodasEmpresas() {
+  if (!_dreArvorePromise) {
+    _dreArvorePromise = _carregarDadosDreArvoreImpl().finally(() => { _dreArvorePromise = null; });
+  }
+  return _dreArvorePromise;
+}
+async function _carregarDadosDreArvoreImpl() {
   const empresas = ['RT', 'KMNO', 'NOVAH'];
   const catPath = 'dash_categories?select=codigo,descricao,conta_receita,conta_despesa,codigo_dre';
   const recPath = 'dash_accounts_receivable?select=data_emissao,data_registro,data_vencimento,data_pagamento,data_previsao,valor_documento,valor_recebido,status_titulo,codigo_categoria,observacao,numero_documento,numero_documento_fiscal,codigo_cliente_fornecedor,codigo_lancamento_omie,codigo_conta_corrente';
@@ -13752,6 +13761,32 @@ async function loadCompanyData() {
 lastFetchHadErrors = false;
 try {
   carregarDashMetas(); // não precisa esperar — não bloqueia o resto, renderiza quando chegar
+  // 14/10/2026: árvore DRE (3 empresas) começa a carregar já, em segundo plano,
+  // em vez de só depois do render. As tabelas grandes ela pega do cache do sbPaged.
+  if (!dreArvoreCategoriesCache) carregarDadosDreArvoreTodasEmpresas().catch(e => console.error('pré-carga árvore DRE falhou:', e));
+  // 14/10/2026: as 3 tabelas pequenas abaixo saem junto com as grandes (antes
+  // esperavam as grandes terminar e ainda iam uma depois da outra).
+  const pOrcamento = Promise.resolve(supabaseClient.from('dash_orcamento_realizado')
+    .select('empresa_id,ano,mes,receitas_realizado,despesas_realizado'));
+  const pOrcCategoria = (async () => {
+    let rows = [];
+    let fromIdx = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data: page, error: pageErr } = await supabaseClient
+        .from('dash_orcamento_realizado_categoria')
+        .select('empresa_id,ano,mes,cod_categoria,valor_realizado')
+        .range(fromIdx, fromIdx + PAGE - 1);
+      if (pageErr) throw pageErr;
+      rows = rows.concat(page || []);
+      if (!page || page.length < PAGE) break;
+      fromIdx += PAGE;
+    }
+    return rows;
+  })();
+  pOrcCategoria.catch(() => {}); // erro tratado no try/catch lá embaixo
+  const pSaldoMensal = Promise.resolve(supabaseClient.from('dash_saldo_bancario_mensal')
+    .select('empresa_id,cod_cc,descricao,ano,mes,saldo_dia1'));
   const [categories, movements, receivable, payable, clients, contasCorrentes, payableCategorias, cmcVendasBruto] = await Promise.all([
     sbMultiPaged('dash_categories?select=codigo,descricao,conta_receita,conta_despesa,natureza,transferencia,nao_exibir,nao_fluxo,categoria_superior'),
     sbMultiPaged('dash_financial_movements?select=cod_categoria,dt_emissao,dt_registro,dt_pagamento,dt_vencimento,status,natureza,val_pago,val_liquido,num_titulo,observacao,origem,cod_titulo,cod_cc'),
@@ -13784,9 +13819,7 @@ try {
   // busca direto via supabaseClient, sem passar por sbMultiPaged (que
   // itera por empresa e não é necessário aqui).
   try {
-    const { data: orcamentoRows, error: orcamentoErr } = await supabaseClient
-      .from('dash_orcamento_realizado')
-      .select('empresa_id,ano,mes,receitas_realizado,despesas_realizado');
+    const { data: orcamentoRows, error: orcamentoErr } = await pOrcamento;
     if (orcamentoErr) throw orcamentoErr;
     orcamentoRealizadoCache = {};
     (orcamentoRows || []).forEach(r => {
@@ -13805,19 +13838,7 @@ try {
     // aparentemente aleatória (ex: Despesas Diretoria de Junho da Novah
     // ausente, mas a de Julho presente). Paginado em lotes de 1000, igual
     // ao padrão já usado em sbPaged/sbMultiPaged pras outras tabelas.
-    let orcCatRows = [];
-    let fromIdx = 0;
-    const PAGE = 1000;
-    while (true) {
-      const { data: page, error: pageErr } = await supabaseClient
-        .from('dash_orcamento_realizado_categoria')
-        .select('empresa_id,ano,mes,cod_categoria,valor_realizado')
-        .range(fromIdx, fromIdx + PAGE - 1);
-      if (pageErr) throw pageErr;
-      orcCatRows = orcCatRows.concat(page || []);
-      if (!page || page.length < PAGE) break;
-      fromIdx += PAGE;
-    }
+    const orcCatRows = await pOrcCategoria; // paginado, disparado no início do load
     orcamentoRealizadoCategoriaCache = {};
     (orcCatRows || []).forEach(r => {
       const chave = `${r.empresa_id}|${r.ano}-${String(r.mes).padStart(2, '0')}`;
@@ -13835,9 +13856,7 @@ try {
   // pra Jun/2026+ no card "Bancos" (rollback tinha bug de double-count e
   // não incluía transferência entre contas — ver decisão 11/08/2026).
   try {
-    const { data: saldoRows, error: saldoErr } = await supabaseClient
-      .from('dash_saldo_bancario_mensal')
-      .select('empresa_id,cod_cc,descricao,ano,mes,saldo_dia1');
+    const { data: saldoRows, error: saldoErr } = await pSaldoMensal;
     if (saldoErr) throw saldoErr;
     saldoBancarioMensalCache = {};
     saldoBancarioMensalContasCache = {};
