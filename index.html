@@ -3952,7 +3952,7 @@
 <script>
 // Versão do arquivo no ar — carimbada pelo checar.ps1 antes de cada commit (14/10/2026).
 // Aparece no rodapé, pra saber na hora qual versão o navegador está rodando.
-const BUILD_VERSAO = '14/10/2026 16:07';
+const BUILD_VERSAO = '14/10/2026 16:14';
   // Função responsável por alternar as secções do Dashboard de forma fluida
 // Nomes exibidos no cabeçalho (ao lado da data) — pedido 03/08/2026.
 // viewMenu fica com label vazio (é a tela inicial, não precisa dizer "Menu").
@@ -4435,7 +4435,8 @@ function showDashboard() {
   const mesAtual = dayjs().format('YYYY-MM');
   const junhoDoAno = dayjs().month(5).startOf('month').format('YYYY-MM');
   document.getElementById('globalPeriodDe').value = junhoDoAno;
-  document.getElementById('globalPeriodAte').value = mesAtual;
+  // 14/10/2026: Até abre no último mês FECHADO (nunca o mês corrente)
+  document.getElementById('globalPeriodAte').value = mesUltimoFechado();
 
   // Update user info
   const infoEl = document.getElementById('userInfo');
@@ -16057,10 +16058,15 @@ function renderForSelectedMonth() {
     try { renderResumoCmcKmno(grupoDe, grupoAte); } catch (e) { console.error('renderResumoCmcKmno falhou:', e); }
     // FIX 20/08/2026: mesma correção de ordem do switchView acima —
     // espera a árvore nativa carregar antes de desenhar o Resumo.
-    (async () => {
-      try { await renderDreNativoCopia(); } catch (e) { console.error('renderDreNativoCopia falhou:', e); }
-      try { renderGrupoDreCompetenciaCopia(grupoDe, grupoAte); } catch (e) { console.error('renderGrupoDreCompetenciaCopia falhou:', e); }
-    })();
+    // 14/10/2026: a tela "DRE por Competência" (~8s de processamento) só é
+    // desenhada aqui se estiver ABERTA. Se não estiver, o switchView desenha
+    // ela ao abrir, já com o período atual (mesmas 2 chamadas).
+    if (document.getElementById('viewDfcArvoreCopia')?.classList.contains('active')) {
+      (async () => {
+        try { await renderDreNativoCopia(); } catch (e) { console.error('renderDreNativoCopia falhou:', e); }
+        try { renderGrupoDreCompetenciaCopia(grupoDe, grupoAte); } catch (e) { console.error('renderGrupoDreCompetenciaCopia falhou:', e); }
+      })();
+    }
     renderInadimplencia(movementsCache, receivableCache, payableCache, grupoDe);
     renderPagarAnalises(payableCache, grupoDe);
   } catch (e) { console.error('renderGrupoDfc falhou:', e); }
