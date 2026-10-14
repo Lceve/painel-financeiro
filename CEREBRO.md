@@ -5,7 +5,7 @@
 > e atualizá-lo no fim, sempre que houver commit/push de mudança no
 > dashboard, decisão tomada, ou bug encontrado/corrigido.
 >
-> Última atualização: 24/08/2026
+> Última atualização: 14/10/2026
 
 ---
 
@@ -22,8 +22,8 @@ Dashboard financeiro multi-empresa para 3 empresas: **KMNO Sports**,
 **RT Esportes e Eventos**, **NOVAH** (ex-Blue Line, rebranding concluído
 20/07/2026 — usar sempre `NOVAH` no código, nunca `BLUELINE`).
 
-- Front-end: `index.html` único (~21k linhas), vanilla JS + Chart.js,
-  hospedado no GitHub Pages.
+- Front-end: `index.html` único (~23k linhas), vanilla JS + Chart.js,
+  hospedado no GitHub Pages (`dash.kmno.cloud`).
 - Repo: **`Lceve/painel-financeiro`** (username do GitHub trocado de novo
   em 24/08/2026, de `LMC404-lang` pra `Lceve` — confirmado que push/pull
   continuam funcionando sem reconfiguração, o GitHub redireciona sozinho.
@@ -109,10 +109,16 @@ Dashboard financeiro multi-empresa para 3 empresas: **KMNO Sports**,
   Mecanismo legítimo desde 20/08/2026, não é bug — some se você comparar
   duas queries e uma não aplicar esse fallback.
 
+- **CRLF x LF no `index.html`** (14/10/2026): no disco o arquivo está com
+  finais de linha CRLF e no repositório LF — `git diff` normal mostra o
+  arquivo inteiro alterado. Usar `git diff --ignore-cr-at-eol index.html`
+  pra ver a mudança real.
+
 ## Links úteis
 
 - Repo: https://github.com/Lceve/painel-financeiro
-- Dashboard: https://lceve.github.io/painel-financeiro/
+- Dashboard: https://dash.kmno.cloud (endereço antigo https://lceve.github.io/painel-financeiro/ continua abrindo)
+- Faturador (serviço separado): https://faturador.kmno.cloud
 
 ---
 
@@ -279,50 +285,21 @@ Jun/2026 contra `PosicaoEstoque` pra validar contra referência esperada
 (não feito ainda); construir tela nova seguindo padrão visual do "Resumo
 (Grupo, R$)".
 
-### 🟡 Faturador KMNO (projeto separado, não é o dashboard)
+### ✅ Faturador — saiu do dashboard (14/10/2026)
 
-Roda em `C:\omie-sync\omie-sync-novah`, máquina Windows do Edgar
-(separado da VPS/dashboard).
-
-**Estado**: 15 pedidos KMNO pré-01/07/2026 cancelados no Omie com nota
-(exceto nº2733/2271805680, bloqueado pós-cancelamento, deixar como está).
-Scripts (`categorizador-final.js`, `megaconsolidacao-coletar.js`,
-`criar-consolidado-2.js`) foram perdidos do disco e reconstruídos com
-preços validados:
-
-| Item | Preço |
-|---|---|
-| Gandola Adulto / Infantil | R$18 / R$13,50 |
-| Calça Adulto / Infantil | R$12 (PRO/STUCK R$18) / R$9 |
-| Faixa Lisa / com Friso | R$2,50 / R$3,50 |
-| Bermuda / Rash Guard (incl. Mormaii) | R$7,50 |
-| Kimono Infantil Sarja / Mormaii Kimono | R$20 / R$30 |
-| Patch Composição / Sublimado P-M-G | R$1,25 / R$3,50-R$5-R$6 |
-| Resto | CFOP 5125 |
-
-Excluídos por falta de preço/cadastro inativo: "Patch Gola em Z", "Patch
-Sublimado Embutido", família "Patch Kimono Bordado".
-
-**Suspeita não investigada**: `CancelarPedidoVenda` não atualiza `dAlt`,
-sync incremental pode perder cancelamentos puros.
-
-**Universo atual (muda diariamente, sempre revalidar)**: ~110 pedidos
-candidatos (etapa 50, cliente KMNO, ≥01/07, sem CFOP 6xxx) → ~329 itens
-únicos → 3 lotes de até 110 itens. 97 pedidos abertos em etapa=50 (Novah,
-cliente KMNO) — não confirmado se são os 77 originais dos consolidados
-cancelados nº3835/3836 ou incluem novos.
-
-**Nada criado ainda**: script de consolidação real, decisão de
-cancelar+faturar originais, cron real na VPS com log diário.
-
-**Agendamento planejado**: Segunda–Quinta, teto ~90-110 itens/lote (não
-por pedido), Quinta libera o resto da semana, meta ~30-31
-consolidados/mês.
-
-**Limites técnicos Omie**: `IncluirPedido` com 100+ itens precisa
-`AbortController` 240s timeout (servidor pode completar após abort —
-sempre checar com `ListarPedidos`); lote confiável máx ~110 itens;
-`AlterarPedidoVenda` exige `quantidade` mesmo sem mudança.
+- A aba **Faturador** foi removida do dashboard (view, item do menu admin,
+  trechos do `switchView`, cliente `supabaseKmno` e todo o JS da view).
+  O `supabaseKmno` era usado só por essa aba.
+- O faturador agora é um serviço próprio: **`faturador.kmno.cloud`**
+  (repo `Lceve/faturador`, VPS em `/root/faturador`, pm2 `faturador-web`).
+  Regras, histórico e pendências dele ficam no repo do faturador, não aqui.
+- O robô antigo `faturador-auto-diario.js` (cron `40 */3 * * *` em
+  `/root/omie-sync/omie-supabase-sync-KMNO`) foi **desligado** em
+  14/10/2026 (linha comentada no crontab; backup em
+  `/root/crontab.bak-14-10`).
+- O conteúdo antigo desta seção (tabela de preços do categorizador,
+  agendamento Seg–Qui) ficou obsoleto: a regra de preço agora é um
+  percentual do valor dos pedidos, editável na tela do faturador.
 
 ---
 
