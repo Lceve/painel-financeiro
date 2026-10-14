@@ -9,7 +9,11 @@ $txt = [IO.File]::ReadAllText($arq)
 if ($txt -notmatch "const BUILD_VERSAO = '[^']*';") {
   Write-Host "BUILD_VERSAO nao encontrado no index.html" -ForegroundColor Red; exit 1
 }
-$versao = Get-Date -Format 'dd/MM/yyyy HH:mm'
+# Versao x.y.z a partir do nº de commits (decidido 14/10/2026):
+# proximo commit = total atual + 1; y = centena, z = resto. Ex: 258 -> 1.2.58
+$n = [int](git rev-list --count HEAD) + 1
+$semver = "1.$([math]::Floor($n / 100)).$($n % 100)"
+$versao = "$semver - " + (Get-Date -Format 'dd/MM/yyyy HH:mm')
 $novo = [regex]::Replace($txt, "const BUILD_VERSAO = '[^']*';", "const BUILD_VERSAO = '$versao';")
 [IO.File]::WriteAllText($arq, $novo, (New-Object Text.UTF8Encoding($false)))
 
