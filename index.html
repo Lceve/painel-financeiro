@@ -12691,9 +12691,23 @@ function sbMasterProjetar(rows, cols, filtros) {
   return out;
 }
 
+// Cache por query exata + empresa (14/10/2026): loadCompanyData e a árvore
+// DRE pediam a mesma query (ex: payable_categorias, cmc_vendas, nfe) cada um
+// com seu cache próprio, baixando 2-3x. Reaproveita inclusive pedido em
+// andamento; devolve cópia rasa das linhas pra ninguém mexer no dado do outro.
+const sbQueryCache = {};
 async function sbPaged(path, empresaId, pageSize = 1000) {
   const info = SB_MASTER_ATIVO ? sbMasterParse(path) : null;
-  if (!info) return sbPagedRede(path, empresaId, pageSize);
+  if (!info) {
+    if (!SB_MASTER_ATIVO) return sbPagedRede(path, empresaId, pageSize);
+    const chaveQ = `${path}|${empresaId}|${pageSize}`;
+    if (!sbQueryCache[chaveQ]) {
+      sbQueryCache[chaveQ] = sbPagedRede(path, empresaId, pageSize)
+        .catch(err => { delete sbQueryCache[chaveQ]; throw err; });
+    }
+    const rows = await sbQueryCache[chaveQ];
+    return rows.map(r => ({ ...r }));
+  }
   const chave = `${info.tabela}|${empresaId}`;
   if (!sbMasterCache[chave]) {
     const t0 = performance.now();
