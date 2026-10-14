@@ -3952,7 +3952,7 @@
 <script>
 // Versão do arquivo no ar — carimbada pelo checar.ps1 antes de cada commit (14/10/2026).
 // Aparece no rodapé, pra saber na hora qual versão o navegador está rodando.
-const BUILD_VERSAO = '1.2.58 - 14/10/2026 16:26';
+const BUILD_VERSAO = '1.2.59 - 14/10/2026 16:31';
   // Função responsável por alternar as secções do Dashboard de forma fluida
 // Nomes exibidos no cabeçalho (ao lado da data) — pedido 03/08/2026.
 // viewMenu fica com label vazio (é a tela inicial, não precisa dizer "Menu").
@@ -23199,6 +23199,74 @@ showDashboard = function() {
 
 // Start with auth check
 initAuth();
+
+// ===== Cache por passada de render (14/10/2026) =====
+// As 4 funções de cálculo abaixo eram chamadas dezenas de vezes por
+// renderForSelectedMonth com os MESMOS argumentos (ex: o mesmo mês/empresa
+// pedido por cards diferentes). Agora, dentro de UMA passada de render, a
+// 2ª chamada igual reaproveita o resultado da 1ª. O cache é zerado no
+// início e logo depois de cada renderForSelectedMonth, então nada fica
+// velho entre trocas de período/empresa ou recargas de dados.
+// Cada chamada recebe uma CÓPIA do resultado (objetos/arrays simples), pra
+// nenhum card alterar o dado de outro.
+// ?memo=0 na URL desliga. ?memocheck=1 recalcula em todo acerto e loga se
+// der diferente (prova de que os números não mudam).
+(function () {
+  if (/[?&]memo=0(&|$)/.test(location.search)) return;
+  const checar = /[?&]memocheck=1(&|$)/.test(location.search);
+  const nomes = ['buildResumoDetalhadoMesAoVivo', 'buildTodosBlocosRealizado', 'buildResumoCategoriasMes', 'buildTotalPorCategoriaEmpresa'];
+  let memo = new Map();
+  const ids = new WeakMap(); let prox = 1;
+  const chaveArg = (v) => {
+    if (v === null || v === undefined) return String(v);
+    if (typeof v === 'object') {
+      if (typeof v.valueOf === 'function' && typeof v.isValid === 'function') return 'd' + v.valueOf(); // dayjs
+      if (!ids.has(v)) ids.set(v, prox++);
+      return 'o' + ids.get(v);
+    }
+    return typeof v + ':' + String(v);
+  };
+  const copia = (v) => {
+    if (Array.isArray(v)) return v.map(copia);
+    if (v instanceof Map) return new Map(Array.from(v, ([k, x]) => [k, copia(x)]));
+    if (v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
+      const o = {}; for (const k in v) o[k] = copia(v[k]); return o;
+    }
+    return v; // números, strings, dayjs (imutável) etc.
+  };
+  let acertos = 0, divergencias = 0;
+  nomes.forEach(n => {
+    const f = window[n];
+    if (typeof f !== 'function') return;
+    window[n] = function (...args) {
+      const k = n + '|' + args.map(chaveArg).join('|');
+      if (memo.has(k)) {
+        acertos++;
+        const r = copia(memo.get(k));
+        if (checar) {
+          const novo = f.apply(this, args);
+          if (JSON.stringify(novo) !== JSON.stringify(r)) { divergencias++; console.warn('[memo] DIFERENTE em', n, args); }
+        }
+        return r;
+      }
+      const r = f.apply(this, args);
+      memo.set(k, copia(r));
+      return r;
+    };
+  });
+  const rfsm = window.renderForSelectedMonth;
+  if (typeof rfsm === 'function') {
+    window.renderForSelectedMonth = function (...args) {
+      memo = new Map(); acertos = 0; divergencias = 0;
+      try { return rfsm.apply(this, args); }
+      finally {
+        const a = acertos, d = divergencias;
+        memo = new Map();
+        console.log(`[memo] ${a} cálculos reaproveitados` + (checar ? `, ${d} divergências` : ''));
+      }
+    };
+  }
+})();
 
 // ===== Medição de render (14/10/2026, temporário) =====
 // Envolve funções de render/cálculo e ACUMULA tempo e nº de chamadas de
