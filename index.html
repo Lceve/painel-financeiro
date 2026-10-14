@@ -3952,7 +3952,7 @@
 <script>
 // Versão do arquivo no ar — carimbada pelo checar.ps1 antes de cada commit (14/10/2026).
 // Aparece no rodapé, pra saber na hora qual versão o navegador está rodando.
-const BUILD_VERSAO = '1.2.61 - 14/10/2026 16:49';
+const BUILD_VERSAO = '1.2.62 - 14/10/2026 16:57';
   // Função responsável por alternar as secções do Dashboard de forma fluida
 // Nomes exibidos no cabeçalho (ao lado da data) — pedido 03/08/2026.
 // viewMenu fica com label vazio (é a tela inicial, não precisa dizer "Menu").
@@ -4347,6 +4347,7 @@ async function handleForgotPassword(e) {
 }
 
 async function handleLogout() {
+  try { if (SB_IDB_ATIVO) await idbLimpar(); } catch (e) { /* ignore */ } // 14/10/2026: cache do navegador é por usuário
   await supabaseClient.auth.signOut();
   currentSession = null;
   currentProfile = null;
@@ -12567,7 +12568,7 @@ async function sb(path, empresaId) {
 // percebe (veio menos que o pedido e o total é maior) e pagina no tamanho
 // que o servidor devolveu — nunca perde linha.
 const SB_PAGE_SIZE = 10000;
-async function sbPagedRede(path, empresaId, pageSize = SB_PAGE_SIZE) {
+async function sbPagedRedeOnline(path, empresaId, pageSize = SB_PAGE_SIZE) {
   // FIX 25/09/2026: sem ORDER BY o Postgres não garante a mesma ordem entre
   // requisições, e as páginas (buscadas em paralelo) repetiam umas linhas e
   // pulavam outras. Achado na KMNO Jun/2026: extrato 10552432505 (Transferência
@@ -12630,6 +12631,111 @@ async function sbPagedRede(path, empresaId, pageSize = SB_PAGE_SIZE) {
   }
 
   return all;
+}
+
+// ===== Cache no navegador (IndexedDB) — 14/10/2026 =====
+// Guarda o resultado de cada download (por usuário + empresa + query). Ao
+// abrir o painel de novo, entrega o dado salvo na hora (desenho em ~1-2s) e
+// confere o banco em segundo plano. Aviso no topo enquanto confere; se
+// chegou dado diferente, o aviso oferece "Carregar dados novos" (recarrega a
+// página, que aí usa o dado novo já salvo). Dado com mais de 24h é ignorado.
+// Dado salvo há menos de 2 min é usado sem reconferir. Sair limpa tudo.
+// ?cache=0 na URL desliga.
+const SB_IDB_ATIVO = !/[?&]cache=0(&|$)/.test(location.search) && typeof indexedDB !== 'undefined';
+const SB_IDB_TTL = 24 * 3600 * 1000;
+const SB_IDB_FRESCO = 2 * 60 * 1000;
+let _idbPromise = null;
+function idbAbrir() {
+  if (!_idbPromise) {
+    _idbPromise = new Promise((res, rej) => {
+      const r = indexedDB.open('painel-cache', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('dados');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    }).catch(e => { _idbPromise = null; throw e; });
+  }
+  return _idbPromise;
+}
+async function idbOp(modo, fn) {
+  const db = await idbAbrir();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('dados', modo);
+    const req = fn(tx.objectStore('dados'));
+    tx.oncomplete = () => res(req && req.result);
+    tx.onerror = () => rej(tx.error);
+    tx.onabort = () => rej(tx.error);
+  });
+}
+const idbGet = (k) => idbOp('readonly', st => st.get(k));
+const idbPut = (k, v) => idbOp('readwrite', st => st.put(v, k));
+const idbLimpar = () => idbOp('readwrite', st => st.clear());
+function sbHashRows(rows) {
+  const s = JSON.stringify(rows);
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return `${rows.length}:${s.length}:${h >>> 0}`;
+}
+const sbReval = { pendentes: 0, mudou: false, maisAntigo: null, iniciou: false, timer: null };
+function sbAvisoCache(estado) {
+  let el = document.getElementById('avisoCacheDados');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'avisoCacheDados';
+    el.style.cssText = 'position:fixed;top:0;left:50%;transform:translateX(-50%);z-index:9999;padding:6px 14px;border-radius:0 0 8px 8px;font:12px "IBM Plex Mono",monospace;box-shadow:0 2px 6px rgba(0,0,0,.15);';
+    document.body.appendChild(el);
+  }
+  const quando = sbReval.maisAntigo ? dayjs(sbReval.maisAntigo).format('DD/MM HH:mm') : '';
+  if (estado === 'conferindo') {
+    el.style.background = '#f6e7b4'; el.style.color = '#5a4a00';
+    el.textContent = `Mostrando dados salvos de ${quando} — conferindo atualizações…`;
+  } else if (estado === 'ok') {
+    el.style.background = '#d7efe2'; el.style.color = '#024031';
+    el.textContent = 'Dados conferidos com o banco — sem mudanças.';
+    setTimeout(() => el.remove(), 2500);
+  } else if (estado === 'mudou') {
+    el.style.background = '#f3d1cf'; el.style.color = '#7a1d18';
+    el.innerHTML = `Há dados novos desde ${quando}. <button type="button" style="margin-left:8px;cursor:pointer;" onclick="location.reload()">Carregar dados novos</button>`;
+  }
+}
+function sbRevalFim() {
+  clearTimeout(sbReval.timer);
+  sbReval.timer = setTimeout(() => {
+    if (sbReval.pendentes > 0) return;
+    sbAvisoCache(sbReval.mudou ? 'mudou' : 'ok');
+    console.log(`[cache] conferência terminou: ${sbReval.mudou ? 'HÁ dados novos' : 'sem mudanças'}`);
+  }, 1500);
+}
+async function sbRevalidar(chave, path, empresaId, pageSize, salvo) {
+  sbReval.pendentes++;
+  if (!sbReval.iniciou) { sbReval.iniciou = true; }
+  if (!sbReval.maisAntigo || salvo.t < sbReval.maisAntigo) sbReval.maisAntigo = salvo.t;
+  sbAvisoCache('conferindo');
+  try {
+    const rows = await sbPagedRedeOnline(path, empresaId, pageSize);
+    const h = sbHashRows(rows);
+    if (h !== salvo.h) { sbReval.mudou = true; console.log(`[cache] mudou: ${path.split('?')[0]} ${empresaId}`); }
+    await idbPut(chave, { t: Date.now(), h, rows });
+  } catch (e) {
+    console.error('[cache] conferência falhou:', e);
+  } finally {
+    sbReval.pendentes--;
+    sbRevalFim();
+  }
+}
+async function sbPagedRede(path, empresaId, pageSize = SB_PAGE_SIZE) {
+  const uid = currentSession?.user?.id;
+  if (!SB_IDB_ATIVO || !uid) return sbPagedRedeOnline(path, empresaId, pageSize);
+  const chave = `${uid}|${empresaId}|${pageSize}|${path}`;
+  let salvo = null;
+  try { salvo = await idbGet(chave); } catch (e) { /* sem cache, segue online */ }
+  const agora = Date.now();
+  if (salvo && salvo.rows && agora - salvo.t < SB_IDB_TTL) {
+    if (agora - salvo.t > SB_IDB_FRESCO) sbRevalidar(chave, path, empresaId, pageSize, salvo);
+    return salvo.rows;
+  }
+  const rows = await sbPagedRedeOnline(path, empresaId, pageSize);
+  setTimeout(() => { idbPut(chave, { t: Date.now(), h: sbHashRows(rows), rows }).catch(() => {}); }, 0);
+  return rows;
 }
 
 // ===== sbPaged com download único por tabela (14/10/2026) =====
@@ -12773,7 +12879,7 @@ async function auditarSbMaster(empresa = 'KMNO') {
     const info = sbMasterParse(path);
     const novo = await sbPaged(path, empresa);
     const corte = SB_MASTER_FILTRO[info.tabela];
-    const antigo = await sbPagedRede(corte ? `${path}&${corte}` : path, empresa);
+    const antigo = await sbPagedRedeOnline(corte ? `${path}&${corte}` : path, empresa);
     const igual = JSON.stringify(novo) === JSON.stringify(antigo);
     if (igual) ok++; else ruim++;
     console.log(`[auditoria ${empresa}] ${igual ? 'IGUAL ' : 'DIFERENTE'} ${info.tabela} (${novo.length} x ${antigo.length}) ${path.slice(path.indexOf('?') + 1, path.indexOf('?') + 70)}`);
