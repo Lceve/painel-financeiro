@@ -3952,7 +3952,7 @@
 <script>
 // Versão do arquivo no ar — carimbada pelo checar.ps1 antes de cada commit (14/10/2026).
 // Aparece no rodapé, pra saber na hora qual versão o navegador está rodando.
-const BUILD_VERSAO = '1.2.59 - 14/10/2026 16:31';
+const BUILD_VERSAO = '1.2.60 - 14/10/2026 16:44';
   // Função responsável por alternar as secções do Dashboard de forma fluida
 // Nomes exibidos no cabeçalho (ao lado da data) — pedido 03/08/2026.
 // viewMenu fica com label vazio (é a tela inicial, não precisa dizer "Menu").
@@ -23268,12 +23268,13 @@ initAuth();
   }
 })();
 
-// ===== Medição de render (14/10/2026, temporário) =====
+// ===== Medição de render (14/10/2026) — ligar com ?medir=1 =====
 // Envolve funções de render/cálculo e ACUMULA tempo e nº de chamadas de
 // cada uma. Ao fim de cada renderForSelectedMonth imprime uma tabela
 // (console.table) com as que somaram mais de 50ms. Não muda nenhum cálculo.
-// Pra desligar: apagar este bloco.
+// Só liga com ?medir=1 na URL (14/10/2026) — sem o parâmetro não envolve nada.
 (function () {
+  if (!/[?&]medir=1(&|$)/.test(location.search)) return;
   const nomes = ['renderDre','renderDfc','renderDfcArvore','renderProjections','preencherComparativoAnual',
     'renderResumoConsolidado','renderGrupoDfc','renderResumoCmcKmno','renderDreNativoCopia',
     'renderGrupoDreCompetenciaCopia','renderInadimplencia','renderPagarAnalises','renderAnalisesGraficoIndicadores',
