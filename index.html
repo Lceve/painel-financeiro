@@ -8,11 +8,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dayjs/1.11.10/dayjs.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<!-- xlsx/jsPDF/autotable: carregados só ao exportar (carregarScript), 14/10/2026 -->
 <style>
   :root {
     --navy:      #FFFFFF;
@@ -2463,9 +2461,6 @@
   .notes-panel { width: 280px; }
 }
 </style>
-  <!-- SheetJS (xlsx) via CDN -- usado só pra exportar o card "Resumo
-       (Grupo, R$)" pra Excel (pedido 02/09/2026). -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -6438,7 +6433,27 @@ function fmtDreNativoValor(v) {
 // o card "Resumo (Grupo, R$)" por enquanto. Genérico o suficiente pra
 // reaproveitar em outros cards depois (recebe o id da <table> e um nome
 // de arquivo).
-function exportarTabelaExcel(tableId, nomeArquivo) {
+// Carrega um <script> sob demanda, uma vez só (14/10/2026: xlsx/jsPDF saíram
+// do <head> — ~1,3 MB que só servem pra exportar).
+const _scriptsCarregados = {};
+function carregarScript(url) {
+  if (!_scriptsCarregados[url]) {
+    _scriptsCarregados[url] = new Promise((resolve, reject) => {
+      const el = document.createElement('script');
+      el.src = url;
+      el.onload = resolve;
+      el.onerror = () => { delete _scriptsCarregados[url]; reject(new Error('Falha ao carregar ' + url)); };
+      document.head.appendChild(el);
+    });
+  }
+  return _scriptsCarregados[url];
+}
+const URL_XLSX = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+const URL_JSPDF = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+const URL_JSPDF_AUTOTABLE = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js';
+
+async function exportarTabelaExcel(tableId, nomeArquivo) {
+  try { await carregarScript(URL_XLSX); } catch (e) { console.error(e); }
   const tabela = document.getElementById(tableId);
   if (!tabela || typeof XLSX === 'undefined') {
     alert('Não foi possível exportar (tabela ou biblioteca não carregada).');
@@ -13592,8 +13607,10 @@ function renderDfc(data) {
 // (buildDreRows, buildDfc, computePeriodTotals) — sem recalcular nada, só
 // formatando o que já está validado. DRE e DFC ficam em seções distintas
 // e claramente rotuladas dentro do PDF — nunca misturadas linha a linha.
-function exportResumoPeriodoToPdf() {
+async function exportResumoPeriodoToPdf() {
   const btn = document.getElementById('btnExportDfcPdf');
+  // jsPDF primeiro, autotable depois (o plugin se pendura no jsPDF)
+  try { await carregarScript(URL_JSPDF); await carregarScript(URL_JSPDF_AUTOTABLE); } catch (e) { console.error(e); }
   if (!categoriesCache || !movementsCache) {
     alert('Os dados ainda estão carregando. Aguarde um instante e tente novamente.');
     return;
