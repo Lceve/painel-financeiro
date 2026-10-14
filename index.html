@@ -3952,7 +3952,7 @@
 <script>
 // Versão do arquivo no ar — carimbada pelo checar.ps1 antes de cada commit (14/10/2026).
 // Aparece no rodapé, pra saber na hora qual versão o navegador está rodando.
-const BUILD_VERSAO = '14/10/2026 15:58';
+const BUILD_VERSAO = '14/10/2026 16:04';
   // Função responsável por alternar as secções do Dashboard de forma fluida
 // Nomes exibidos no cabeçalho (ao lado da data) — pedido 03/08/2026.
 // viewMenu fica com label vazio (é a tela inicial, não precisa dizer "Menu").
@@ -13438,8 +13438,18 @@ function populateGlobalPeriod(selectedMonth) {
   // Só define um valor inicial se os campos ainda estiverem vazios —
   // preserva a escolha do usuário em recargas subsequentes (ex: refresh
   // automático de dados sem o usuário ter mexido no período).
+  // 14/10/2026 (pendência Lucas): o seletor vai de Jun/2026 até o último mês
+  // FECHADO — nunca o mês corrente (em outubro, o máximo é setembro).
+  const ultimoFechado = mesUltimoFechado();
+  inputDe.max = ultimoFechado;
+  inputAte.max = ultimoFechado;
   if (!inputDe.value) inputDe.value = '2026-06';
-  if (!inputAte.value) inputAte.value = dayjs().format('YYYY-MM');
+  if (!inputAte.value) inputAte.value = ultimoFechado;
+}
+
+// 'YYYY-MM' do último mês fechado (mês anterior ao atual)
+function mesUltimoFechado() {
+  return dayjs().subtract(1, 'month').format('YYYY-MM');
 }
 
 // Retorna o período global selecionado como { de: dayjs, ate: dayjs } —
@@ -13448,8 +13458,8 @@ function populateGlobalPeriod(selectedMonth) {
 function getSelectedPeriodRange() {
   const inputDe = document.getElementById('globalPeriodDe');
   const inputAte = document.getElementById('globalPeriodAte');
-  let de = dayjs((inputDe.value || dayjs().format('YYYY-MM')) + '-01');
-  let ate = dayjs((inputAte.value || dayjs().format('YYYY-MM')) + '-01');
+  let de = dayjs((inputDe.value || mesUltimoFechado()) + '-01');
+  let ate = dayjs((inputAte.value || mesUltimoFechado()) + '-01');
   if (ate.isBefore(de)) { const tmp = de; de = ate; ate = tmp; }
   return { de, ate };
 }
