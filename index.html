@@ -3952,7 +3952,7 @@
 <script>
 // Versão do arquivo no ar — carimbada pelo checar.ps1 antes de cada commit (14/10/2026).
 // Aparece no rodapé, pra saber na hora qual versão o navegador está rodando.
-const BUILD_VERSAO = '14/10/2026 16:04';
+const BUILD_VERSAO = '14/10/2026 16:07';
   // Função responsável por alternar as secções do Dashboard de forma fluida
 // Nomes exibidos no cabeçalho (ao lado da data) — pedido 03/08/2026.
 // viewMenu fica com label vazio (é a tela inicial, não precisa dizer "Menu").
@@ -23193,6 +23193,30 @@ showDashboard = function() {
 
 // Start with auth check
 initAuth();
+
+// ===== Medição de render (14/10/2026, temporário) =====
+// Envolve as funções de render chamadas pelo renderForSelectedMonth e loga
+// as que levam mais de 50ms: [render] nome: Xms. Não muda nenhum cálculo.
+// Pra desligar: apagar este bloco.
+(function () {
+  const nomes = ['renderDre','renderDfc','renderDfcArvore','renderProjections','preencherComparativoAnual',
+    'renderResumoConsolidado','renderGrupoDfc','renderResumoCmcKmno','renderDreNativoCopia',
+    'renderGrupoDreCompetenciaCopia','renderInadimplencia','renderPagarAnalises','renderAnalisesGraficoIndicadores',
+    'renderVendasFaturamento','renderPrazoMedioPagamentoRecebimento','renderSaidasEntradasPecasTudo',
+    'renderImpostosView','renderDreArvoreNativa','renderResumoCapital','renderGrupoBancos','renderForSelectedMonth'];
+  const loga = (n, t) => { const ms = Math.round(performance.now() - t); if (ms > 50) console.log(`[render] ${n}: ${ms}ms`); };
+  nomes.forEach(n => {
+    const f = window[n];
+    if (typeof f !== 'function') return;
+    window[n] = function (...args) {
+      const t = performance.now();
+      const r = f.apply(this, args);
+      if (r && typeof r.then === 'function') { r.then(() => loga(n + ' (async)', t), () => {}); }
+      else loga(n, t);
+      return r;
+    };
+  });
+})();
 </script>
 <script>
     function calcularDiferencaAnual() {
