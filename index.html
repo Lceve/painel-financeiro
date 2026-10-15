@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Painel Financeiro · Multi-empresa</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f1b2d'/%3E%3Crect x='6' y='17' width='5' height='9' rx='1' fill='%23c9a227'/%3E%3Crect x='13.5' y='11' width='5' height='15' rx='1' fill='%23c9a227'/%3E%3Crect x='21' y='6' width='5' height='20' rx='1' fill='%23c9a227'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -3160,7 +3161,7 @@
            23/07/2026), usando cod_cc em dash_financial_movements. -->
       <div class="bloco-card" style="margin-bottom:14px;">
         <div class="bloco-head" id="grupoBancosToggleHead" style="cursor:pointer;" onclick="toggleGrupoBancosCard()">
-          <div class="bloco-titulo">Bancos — Saldo Primeiro dia do Mês (R$) <span id="grupoBancosToggleIcon" style="font-size:11px;color:var(--bone-dim);"></span></div>
+          <div class="bloco-titulo">Bancos (inclui investimentos) — Saldo Primeiro dia do Mês (R$) <span id="grupoBancosToggleIcon" style="font-size:11px;color:var(--bone-dim);"></span></div>
         </div>
         <div class="bloco-body" id="grupoBancosBodyWrap">
           <div class="dre-tbl-wrap">
@@ -3952,7 +3953,7 @@
 <script>
 // Versão do arquivo no ar — carimbada pelo checar.ps1 antes de cada commit (14/10/2026).
 // Aparece no rodapé, pra saber na hora qual versão o navegador está rodando.
-const BUILD_VERSAO = '1.2.65 - 14/10/2026 17:30';
+const BUILD_VERSAO = '1.2.66 - 15/10/2026 09:41';
   // Função responsável por alternar as secções do Dashboard de forma fluida
 // Nomes exibidos no cabeçalho (ao lado da data) — pedido 03/08/2026.
 // viewMenu fica com label vazio (é a tela inicial, não precisa dizer "Menu").
@@ -5874,17 +5875,6 @@ const DFC_ARVORE_EMPRESAS = ['RT', 'KMNO', 'NOVAH', 'TODAS'];
 function selecionarEmpresaDfcArvore(key) {
   dfcArvoreEmpresaAtual = key;
   renderDfcArvore();
-}
-
-function renderDfcArvoreTabs() {
-  const wrap = document.getElementById('dfcEmpresaTabs');
-  if (!wrap) return;
-  if (!dfcArvoreEmpresaAtual) dfcArvoreEmpresaAtual = 'TODAS';
-  wrap.innerHTML = DFC_ARVORE_EMPRESAS.map(key => {
-    const label = key === 'TODAS' ? 'Todas as Empresas' : (COMPANIES[key]?.label || key);
-    const active = key === dfcArvoreEmpresaAtual ? ' active' : '';
-    return `<button type="button" class="dre-empresa-tab${active}" data-empresa="${key}" onclick="selecionarEmpresaDfcArvore('${key}')">${label}</button>`;
-  }).join('');
 }
 
 // Mesmo padrão pai/filho +/- da árvore de DRE (ver toggleItensBloco):
@@ -11031,8 +11021,6 @@ function calcularBlocosPorColuna(empresa, colunas, categories, movements) {
   });
 }
 
-function anoDaColuna(col) { return col.mes ? col.mes.year() : null; }
-
 // Igual calcularBlocosPorColuna, mas calcula as empresas de uma vez —
 // usado pela aba "Todas as Empresas" (consolidado) E por qualquer
 // combinação de 2+ empresas selecionadas (pedido 30/07: "se estiver 2 ou
@@ -12302,14 +12290,6 @@ function toggleItensBloco(blocoId) {
   if (icon) icon.textContent = abrindo ? '−' : '+';
 }
 
-function selecionarEmpresaDreArvore(key) {
-  dreArvoreEmpresaAtual = key;
-  document.querySelectorAll('.dre-empresa-tab').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.empresa === key);
-  });
-  renderForSelectedMonth();
-}
-
 function toggleBloco(blocoId) {
   // Esconde o bloco completamente
   const card = document.getElementById(blocoId);
@@ -12319,16 +12299,6 @@ function toggleBloco(blocoId) {
   const p = loadSidebarPrefs();
   p[blocoId] = false;
   saveSidebarPrefs(p);
-}
-
-// Mostra/esconde um bloco ou gráfico marcado com data-painel-toggle, a
-// partir de um checkbox com data-target = id do elemento. Puramente
-// visual: não afeta nenhum cálculo, só o display do card.
-function togglePainelItem(checkbox) {
-  const targetId = checkbox.getAttribute('data-target');
-  const el = document.getElementById(targetId);
-  if (!el) return;
-  el.style.display = checkbox.checked ? '' : 'none';
 }
 
 // NOTA SOBRE omie_financial_movements: o endpoint ListarMovimentos pode
@@ -16765,27 +16735,6 @@ async function verHistoricoCartoesReceber(chave) {
 }
 
 
-// Reconstrução de snapshot no passado (mesmo princípio de aging): conta
-// o título se ele já existia (data_emissao/data_registro <= alvo) e
-// ainda não tinha sido recebido até aquela data (sem data_pagamento, ou
-// data_pagamento depois do alvo). Só KMNO e NOVAH têm cliente RedeCard
-// cadastrado (RT não tem — ver REDECARD_CODIGO_CLIENTE_POR_EMPRESA).
-function calcSaldoCartoesEmData(receivable, dataAlvo) {
-  let total = 0;
-  (receivable || []).forEach(m => {
-    const redecardCodigo = REDECARD_CODIGO_CLIENTE_POR_EMPRESA[m._empresa];
-    if (!redecardCodigo) return;
-    if (Number(m.codigo_cliente_fornecedor) !== redecardCodigo) return;
-    if (m.status_titulo === 'CANCELADO') return;
-    const dataEmissao = m.data_emissao || m.data_registro;
-    if (!dataEmissao) return;
-    if (dayjs(dataEmissao).isAfter(dataAlvo, 'day')) return; // título ainda não existia nessa data
-    if (m.data_pagamento && !dayjs(m.data_pagamento).isAfter(dataAlvo, 'day')) return; // já tinha sido recebido até essa data
-    total += Number(m.valor_documento || 0);
-  });
-  return total;
-}
-
 // ===================================================================
 // Cache dedicado "Análise Caixa Bancos no Período" — SEMPRE as 3
 // empresas (KMNO+NOVAH+RT), independente do seletor global de empresas
@@ -18601,10 +18550,11 @@ function buildResumoCategoriasMes(empresa, categories, movements, monthStart, mo
     const despFin = B.despesas_financeiras.itens;
     return {
       receita: itensParaCategoria(B.receita_bruta.itens),
-      // REVERTIDO 19/08/2026 (pedido Lucas): "Adiantamento de Clientes"
-      // (1.04.01) voltou pra dentro de B.receita_bruta — chave
-      // "adiantamentoClientesExcluido" removida (bloco isolado não
-      // existe mais, ver buildTodosBlocosRealizado).
+      // HISTÓRICO: em 19/08/2026 "Adiantamento de Clientes" (1.04.01)
+      // voltou pra B.receita_bruta, mas desde 28/08/2026 (pedido Lucas)
+      // ele fica em "Recebimento Empréstimos" (B.emprestimos_recebidos),
+      // NÃO na receita — ver buildTodosBlocosRealizado. A chave
+      // "adiantamentoClientesExcluido" continua removida.
       // 17/08/2026 (pedido Lucas): exposto só pra receitaOficial() poder
       // descontar do total "Recebimento" — Transferência entre contas
       // não é venda, não deve contar como receita em lugar nenhum.
@@ -19148,22 +19098,6 @@ function testeSomaTotal(grupos, chave) {
   const out = [0,0,0,0,0];
   testeGruposPorChave(grupos, chave).forEach(g => g.total.forEach((v,i) => { out[i] += v; }));
   return out;
-}
-
-function testeFilhosConcat(grupos, chave) {
-  let out = [];
-  testeGruposPorChave(grupos, chave).forEach(g => { if (g.filhos) out = out.concat(g.filhos); });
-  return out;
-}
-
-// Receita bruta total da empresa no período (base do AV%) — usa só o
-// próprio grupo "receita" da empresa, não a soma das duas.
-function testeReceitaTotalPeriodo(grupos, meses) {
-  const total = testeSomaTotal(grupos, 'receita');
-  return meses.reduce((s, m) => {
-    const idx = testeMesIdx(m.mesDayjs);
-    return idx >= 0 ? s + total[idx] : s;
-  }, 0);
 }
 
 // Corrigido 29/07: a 1ª versão desse ajuste separou TODAS as 24 linhas
@@ -20543,7 +20477,7 @@ function _renderProvaRealPorEmpresaImpl(monthStart, monthEnd) {
   // Monta a lista de meses: Jan-Mai fixo (congelado, igual sempre foi),
   // mais Jun/2026+ ao vivo até o fim do período selecionado no topo —
   // pedido 04/08 ("de maio pra frente precisa ter os dados do Omie").
-  const meses = PROVA_REAL_MESES_ORDEM.map((chave, i) => ({
+  let meses = PROVA_REAL_MESES_ORDEM.map((chave, i) => ({
     chave, live: false, label: DRE_ARVORE_NOMES_MES[i].charAt(0) + DRE_ARVORE_NOMES_MES[i].slice(1).toLowerCase(),
   }));
   if (monthEnd) {
@@ -20554,6 +20488,17 @@ function _renderProvaRealPorEmpresaImpl(monthStart, monthEnd) {
       cursor = cursor.add(1, 'month');
       guard++;
     }
+  }
+  // FIX 15/10/2026 (pedido Lucas): Prova Real segue o seletor De/Até —
+  // antes Jan-Mai apareciam sempre e o "De" era ignorado. Só muda quais
+  // colunas aparecem: o saldo inicial de cada mês continua calculado
+  // pelo próprio mês (buildProvaRealPorEmpresaMesVivo), não pela tela.
+  if (monthStart) {
+    const inicioSel = monthStart.startOf('month');
+    meses = meses.filter(m => {
+      const d = m.live ? m.mesDayjs : dayjs('2026-01-01').add(PROVA_REAL_MESES_ORDEM.indexOf(m.chave), 'month');
+      return !d.isBefore(inicioSel) && (!monthEnd || d.isBefore(monthEnd));
+    });
   }
   if (headerEl) {
     headerEl.innerHTML = '<th>Descrição</th>' + meses.map(m => `<th>${m.label}${m.live ? ' •' : ''}</th>`).join('');
@@ -23194,14 +23139,6 @@ document.getElementById('sidebarOverlay').addEventListener('click', closeSidebar
 // openNotesPanel).
 let notesCache = [];
 let notesEmpresaAtual = 'RT';
-
-function selecionarEmpresaNotas(empresaKey) {
-  notesEmpresaAtual = empresaKey;
-  document.querySelectorAll('.notes-panel-tab').forEach(tab => {
-    tab.classList.toggle('active', tab.dataset.empresa === empresaKey);
-  });
-  loadNotes();
-}
 
 function openNotesPanel() {
   document.getElementById('notesPanel').classList.add('open');
