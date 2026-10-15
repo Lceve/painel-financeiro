@@ -3953,7 +3953,7 @@
 <script>
 // Versão do arquivo no ar — carimbada pelo checar.ps1 antes de cada commit (14/10/2026).
 // Aparece no rodapé, pra saber na hora qual versão o navegador está rodando.
-const BUILD_VERSAO = '1.2.66 - 15/10/2026 09:41';
+const BUILD_VERSAO = '1.2.67 - 15/10/2026 09:46';
   // Função responsável por alternar as secções do Dashboard de forma fluida
 // Nomes exibidos no cabeçalho (ao lado da data) — pedido 03/08/2026.
 // viewMenu fica com label vazio (é a tela inicial, não precisa dizer "Menu").
@@ -4599,21 +4599,10 @@ async function approveRequest(id, btn) {
 
   const resultEl = document.getElementById(`req-result-${id}`);
 
-  // 1) marca como aprovado
-  const { error: updErr } = await supabaseClient
-    .from('solicitacoes_acesso')
-    .update({ status: 'aprovado' })
-    .eq('id', id);
-
-  if (updErr) {
-    resultEl.className = 'req-result err show';
-    resultEl.textContent = 'Erro ao aprovar: ' + updErr.message;
-    item.querySelectorAll('button').forEach(b => b.disabled = false);
-    btn.textContent = '✓ Aprovar e criar conta';
-    return;
-  }
-
-  // 2) chama a Edge Function pra criar Auth + profile
+  // FIX 15/10/2026 (pedido Lucas): o status NÃO é mais marcado aqui antes.
+  // A Edge Function aceita 'pendente' ou 'aprovado' e só marca
+  // 'processado' no fim — se ela falhar, a solicitação continua na lista
+  // e dá pra tentar de novo.
   try {
     const res = await fetch(`${DASHBOARD.url}/functions/v1/approve-access-request`, {
       method: 'POST',
@@ -4890,19 +4879,10 @@ async function approvePasswordChange(id, btn) {
 
   const resultEl = document.getElementById(`pw-req-result-${id}`);
 
-  const { error: updErr } = await supabaseClient
-    .from('solicitacoes_troca_senha')
-    .update({ status: 'aprovado' })
-    .eq('id', id);
-
-  if (updErr) {
-    resultEl.className = 'req-result err show';
-    resultEl.textContent = 'Erro ao aprovar: ' + updErr.message;
-    item.querySelectorAll('button').forEach(b => b.disabled = false);
-    btn.textContent = '✓ Aprovar e gerar senha';
-    return;
-  }
-
+  // FIX 15/10/2026 (pedido Lucas): o status NÃO é mais marcado aqui antes.
+  // A Edge Function aceita 'pendente' ou 'aprovado' e só marca
+  // 'processado' no fim — se ela falhar, a solicitação continua na lista
+  // e dá pra tentar de novo.
   try {
     const res = await fetch(`${DASHBOARD.url}/functions/v1/approve-password-change`, {
       method: 'POST',
